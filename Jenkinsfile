@@ -2,13 +2,11 @@ pipeline {
   agent any
 
   environment {
-    // Configure these values for your VPS before running the pipeline.
-    DEPLOY_HOST = 'YOUR_VPS_IP_OR_HOSTNAME'
-    DEPLOY_USER = 'deploy'
-    DEPLOY_DIR = '/opt/holidays-tracker'
-    SERVICE_NAME = 'holidays-tracker'
+    APP_NAME = 'holiday-tracker'
+    IMAGE_NAME = 'holiday-tracker:latest'
+    APP_DOMAIN = 'holiday-tracker.maisonzaro.com'
+    LETSENCRYPT_EMAIL = 'info@maisonzaro.com'
     APP_PORT = '3000'
-    DEPLOY_HOST_KEY = 'vps-deploy-key' // Jenkins SSH private-key credential ID
   }
 
   options {
@@ -35,21 +33,32 @@ pipeline {
       }
     }
 
+    stage('Build image') {
+      steps {
+        sh '''#!/bin/sh
+          set -eu
+          docker build --pull -t "$IMAGE_NAME" .
+        '''
+      }
+    }
+
     stage('Deploy') {
       steps {
-        sshagent(credentials: [env.DEPLOY_HOST_KEY]) {
-          sh '''#!/bin/sh
-            set -eu
-            test "$DEPLOY_HOST" != "YOUR_VPS_IP_OR_HOSTNAME"
-            ssh -o BatchMode=yes "$DEPLOY_USER@$DEPLOY_HOST" "mkdir -p '$DEPLOY_DIR'"
-            rsync -az --delete \
-              --exclude='.git' \
-              --exclude='node_modules' \
-              ./ "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_DIR/"
-            ssh -o BatchMode=yes "$DEPLOY_USER@$DEPLOY_HOST" \
-              "cd '$DEPLOY_DIR' && npm install --omit=dev && sudo systemctl restart '$SERVICE_NAME'"
-          '''
-        }
+        sh '''#!/bin/sh
+          set -eu
+          docker rm -f "$APP_NAME" || true
+
+          docker run -d \
+            --name "$APP_NAME" \
+            --restart unless-stopped \
+            --network proxy \
+            -e VIRTUAL_HOST="$APP_DOMAIN" \
+            -e VIRTUAL_PORT="$APP_PORT" \
+            -e LETSENCRYPT_HOST="$APP_DOMAIN" \
+            -e LETSENCRYPT_EMAIL="$LETSENCRYPT_EMAIL" \
+            -e PORT="$APP_PORT" \
+            "$IMAGE_NAME"
+        '''
       }
     }
 
@@ -58,7 +67,7 @@ pipeline {
         sh '''#!/bin/sh
           set -eu
           curl --fail --silent --show-error --retry 10 --retry-delay 3 \
-            --retry-connrefused https://holiday-tracker.maisonzaro.com/
+            --retry-connrefused "https://$APP_DOMAIN/"
         '''
       }
     }
