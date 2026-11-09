@@ -2,11 +2,9 @@ pipeline {
   agent any
 
   environment {
-    APP_NAME = 'holiday-tracker'
-    IMAGE_NAME = 'holiday-tracker:latest'
-    APP_DOMAIN = 'holiday-tracker.maisonzaro.com'
-    LETSENCRYPT_EMAIL = 'info@maisonzaro.com'
     APP_PORT = '3000'
+    LETSENCRYPT_EMAIL = 'info@maisonzaro.com'
+    DEPLOY_ENABLED = 'false'
   }
 
   options {
@@ -21,6 +19,34 @@ pipeline {
       }
     }
 
+    stage('Configure deployment target') {
+      steps {
+        script {
+          def branch = (env.BRANCH_NAME ?: env.GIT_BRANCH ?: '')
+            .replaceFirst(/^origin\//, '')
+            .replaceFirst(/^refs\/heads\//, '')
+
+          switch (branch) {
+            case ['development', 'develop']:
+              env.APP_NAME = 'holiday-tracker-api-dev'
+              env.APP_DOMAIN = 'holiday-tracker-api.dev.maisonzaro.com'
+              env.IMAGE_NAME = "holiday-tracker-api:dev-${env.BUILD_NUMBER}"
+              env.DEPLOY_ENABLED = 'true'
+              break
+            case 'main':
+              env.APP_NAME = 'holiday-tracker-api'
+              env.APP_DOMAIN = 'holiday-tracker-api.maisonzaro.com'
+              env.IMAGE_NAME = "holiday-tracker-api:prod-${env.BUILD_NUMBER}"
+              env.DEPLOY_ENABLED = 'true'
+              break
+            default:
+              env.IMAGE_NAME = "holiday-tracker-api:${branch.replaceAll(/[^a-zA-Z0-9_.-]/, '-')}-${env.BUILD_NUMBER}"
+              echo "Branch '${branch}' is not configured for deployment; build and verification only."
+          }
+        }
+      }
+    }
+
     stage('Build and verify image') {
       steps {
         sh '''#!/bin/sh
@@ -32,6 +58,9 @@ pipeline {
     }
 
     stage('Deploy') {
+      when {
+        expression { env.DEPLOY_ENABLED == 'true' }
+      }
       steps {
         sh '''#!/bin/sh
           set -eu
@@ -52,6 +81,9 @@ pipeline {
     }
 
     stage('Health check') {
+      when {
+        expression { env.DEPLOY_ENABLED == 'true' }
+      }
       steps {
         sh '''#!/bin/sh
           set -eu
