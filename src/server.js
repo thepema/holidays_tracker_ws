@@ -5,9 +5,21 @@ const app = Fastify({
   logger: true,
 });
 
+const isTrustedOrigin = (origin) => {
+  if (!origin) return false;
+
+  try {
+    const { protocol, hostname } = new URL(origin);
+    const isMaisonZaroDomain = hostname === 'maisonzaro.com' || hostname.endsWith('.maisonzaro.com');
+    return protocol === 'https:' && isMaisonZaroDomain;
+  } catch {
+    return false;
+  }
+};
+
 await app.register(cors, {
-  // Allow the development frontend; override with CORS_ORIGIN per environment if needed.
-  origin: process.env.CORS_ORIGIN || 'https://holiday-tracker.dev.maisonzaro.com',
+  // Allow the API's own origin and sibling app subdomains, but not unrelated sites.
+  origin: (origin, callback) => callback(null, isTrustedOrigin(origin)),
 });
 
 app.get('/', async () => ({
