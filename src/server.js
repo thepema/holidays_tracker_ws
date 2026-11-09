@@ -1,18 +1,21 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
+import cookie from '@fastify/cookie';
 import pool from './db.js';
+import adminRoutes from './routes/admin.js';
+import authRoutes from './routes/auth.js';
+import vacationRoutes from './routes/vacations.js';
+import { authenticateSession } from './services/sessionService.js';
 
-const app = Fastify({
-  logger: true,
-});
+const app = Fastify({ logger: true });
+const SESSION_COOKIE_NAME = 'ht_session';
 
 const isTrustedOrigin = (origin) => {
-  if (!origin) return false;
-
+  if (!origin) return true;
   try {
     const { protocol, hostname } = new URL(origin);
-    const isMaisonZaroDomain = hostname === 'maisonzaro.com' || hostname.endsWith('.maisonzaro.com');
-    return protocol === 'https:' && isMaisonZaroDomain;
+    return protocol === 'https:' &&
+      (hostname === 'maisonzaro.com' || hostname.endsWith('.maisonzaro.com'));
   } catch {
     return false;
   }
@@ -21,37 +24,30 @@ const isTrustedOrigin = (origin) => {
 const localOrigins = new Set([
   'http://localhost:4200',
   'http://127.0.0.1:4200',
+  ...(process.env.FRONTEND_ORIGIN ? [process.env.FRONTEND_ORIGIN] : []),
 ]);
 
 await app.register(cors, {
   origin: (origin, callback) => callback(null, isTrustedOrigin(origin) || localOrigins.has(origin)),
+  credentials: true,
+});
+await app.register(cookie);
+app.decorateRequest('user', null);
+
+app.get('/', async () => ({ message: 'Holiday Tracker API' }));
+
+app.addHook('preHandler', async (request) => {
+  const token = request.cookies?.[SESSION_COOKIE_NAME];
+  if (token) request.user = await authenticateSession(token);
 });
 
-app.get('/', async () => ({
-  message: '¡Hola, mundo!',
-}));
+await app.register(adminRoutes, { prefix: '/api' });
+await app.register(authRoutes, { prefix: '/api' });
+await app.register(vacationRoutes, { prefix: '/api' });
 
-app.get('/api/vacaciones', async (_request, reply) => {
-  try {
-    const { rows } = await pool.query(`
-      SELECT
-        v.id,
-        v.usuario_id AS "usuarioId",
-        v.anio,
-        v.fecha,
-        u.nombre,
-        u.apellidos,
-        u.cargo
-      FROM vacaciones AS v
-      INNER JOIN usuarios AS u ON u.id = v.usuario_id
-      ORDER BY v.fecha ASC, v.id ASC
-    `);
-
-    return { vacaciones: rows };
-  } catch (error) {
-    request.log.error({ err: error }, 'No se pudieron consultar las vacaciones');
-    return reply.code(503).send({ error: 'No se pudieron consultar las vacaciones.' });
-  }
+app.setErrorHandler((error, request, reply) => {
+  request.log.error({ err: error }, 'Error no controlado en la API');
+  return reply.code(500).send({ error: 'Error interno del servidor.' });
 });
 
 const start = async () => {
