@@ -3,7 +3,6 @@ pipeline {
 
   environment {
     LETSENCRYPT_EMAIL = 'info@maisonzaro.com'
-    DEPLOY_ENABLED = 'false'
   }
 
   options {
@@ -32,21 +31,20 @@ pipeline {
               env.APP_DOMAIN = 'holiday-tracker-api.dev.maisonzaro.com'
               env.APP_PORT = '3001'
               env.IMAGE_NAME = "holiday-tracker-api:dev-${env.BUILD_NUMBER}"
-              env.DEPLOY_ENABLED = 'true'
               break
             case 'main':
               env.APP_NAME = 'holiday-tracker-api'
               env.APP_DOMAIN = 'holiday-tracker-api.maisonzaro.com'
               env.APP_PORT = '3000'
               env.IMAGE_NAME = "holiday-tracker-api:prod-${env.BUILD_NUMBER}"
-              env.DEPLOY_ENABLED = 'true'
               break
             default:
               env.IMAGE_NAME = "holiday-tracker-api:${branch.replaceAll(/[^a-zA-Z0-9_.-]/, '-')}-${env.BUILD_NUMBER}"
               echo "Branch '${branch}' is not configured for deployment; build and verification only."
           }
 
-          echo "Branch '${branch}': deploy=${env.DEPLOY_ENABLED}, domain=${env.APP_DOMAIN ?: 'n/a'}, port=${env.APP_PORT ?: 'n/a'}"
+          def deployEnabled = ['holiday-tracker-api-dev', 'holiday-tracker-api'].contains(env.APP_NAME)
+          echo "Branch '${branch}': deploy=${deployEnabled}, domain=${env.APP_DOMAIN ?: 'n/a'}, port=${env.APP_PORT ?: 'n/a'}"
         }
       }
     }
@@ -63,7 +61,7 @@ pipeline {
 
     stage('Deploy') {
       when {
-        expression { env.DEPLOY_ENABLED == 'true' }
+        expression { ['holiday-tracker-api-dev', 'holiday-tracker-api'].contains(env.APP_NAME) }
       }
       steps {
         sh '''#!/bin/sh
@@ -86,7 +84,7 @@ pipeline {
 
     stage('Health check') {
       when {
-        expression { env.DEPLOY_ENABLED == 'true' }
+        expression { ['holiday-tracker-api-dev', 'holiday-tracker-api'].contains(env.APP_NAME) }
       }
       steps {
         sh '''#!/bin/sh
