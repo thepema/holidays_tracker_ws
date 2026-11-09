@@ -67,23 +67,13 @@ pipeline {
         sh '''#!/bin/sh
           set -eu
 
-          env_file="$(mktemp)"
-          trap 'rm -f "$env_file"' EXIT
-          chmod 600 "$env_file"
-          printf 'DB_HOST=%s\\nDB_USER=%s\\nDB_PASSWORD=%s\\nDB_PORT=%s\\nDB_NAME=%s\\n' \\
-            "$DB_HOST" \\
-            "$DB_USER" \\
-            "$DB_PASSWORD" \\
-            "${DB_PORT:-5432}" \\
-            "${DB_NAME:-holidaysTrackerDB}" > "$env_file"
-
           docker rm -f "$APP_NAME" || true
 
           docker run -d \\
             --name "$APP_NAME" \\
             --restart unless-stopped \\
             --network proxy \\
-            --env-file "$env_file" \\
+            --env-file /opt/.env \\
             -e VIRTUAL_HOST="$APP_DOMAIN" \\
             -e VIRTUAL_PORT="$APP_PORT" \\
             -e LETSENCRYPT_HOST="$APP_DOMAIN" \\
