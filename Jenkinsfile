@@ -2,7 +2,6 @@ pipeline {
   agent any
 
   environment {
-    APP_PORT = '3000'
     LETSENCRYPT_EMAIL = 'info@maisonzaro.com'
     DEPLOY_ENABLED = 'false'
   }
@@ -25,17 +24,20 @@ pipeline {
           def branch = (env.BRANCH_NAME ?: env.GIT_BRANCH ?: '')
             .replaceFirst(/^origin\//, '')
             .replaceFirst(/^refs\/heads\//, '')
+            .replaceFirst(/^\*\//, '')
 
           switch (branch) {
             case ['development', 'develop']:
               env.APP_NAME = 'holiday-tracker-api-dev'
               env.APP_DOMAIN = 'holiday-tracker-api.dev.maisonzaro.com'
+              env.APP_PORT = '3001'
               env.IMAGE_NAME = "holiday-tracker-api:dev-${env.BUILD_NUMBER}"
               env.DEPLOY_ENABLED = 'true'
               break
             case 'main':
               env.APP_NAME = 'holiday-tracker-api'
               env.APP_DOMAIN = 'holiday-tracker-api.maisonzaro.com'
+              env.APP_PORT = '3000'
               env.IMAGE_NAME = "holiday-tracker-api:prod-${env.BUILD_NUMBER}"
               env.DEPLOY_ENABLED = 'true'
               break
@@ -43,6 +45,8 @@ pipeline {
               env.IMAGE_NAME = "holiday-tracker-api:${branch.replaceAll(/[^a-zA-Z0-9_.-]/, '-')}-${env.BUILD_NUMBER}"
               echo "Branch '${branch}' is not configured for deployment; build and verification only."
           }
+
+          echo "Branch '${branch}': deploy=${env.DEPLOY_ENABLED}, domain=${env.APP_DOMAIN ?: 'n/a'}, port=${env.APP_PORT ?: 'n/a'}"
         }
       }
     }
