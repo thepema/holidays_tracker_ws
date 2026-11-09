@@ -78,6 +78,8 @@ pipeline {
             -e LETSENCRYPT_EMAIL="$LETSENCRYPT_EMAIL" \\
             -e PORT="$APP_PORT" \\
             "$IMAGE_NAME"
+
+          docker network connect backend-network "$APP_NAME"
         '''
       }
     }
