@@ -1,0 +1,17 @@
+{
+  "name": "holidays-tracker-ws",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "API de ejemplo Hola Mundo con Fastify y Node.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js"
+  },
+  "dependencies": {
+    "fastify": "^5.0.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
