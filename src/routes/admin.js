@@ -1,16 +1,60 @@
-import { requireAdmin } from '../lib/security.js';
+import { requireAdmin, createAdminToken, verifyAdminPassword, ADMIN_TOKEN_TTL_SECONDS } from '../lib/security.js';
 import { createUser, findUserById, listUsersWithoutActiveSession } from '../services/userService.js';
 import { inviteUsersWithoutActiveSession, issueInvitation } from '../services/sessionService.js';
 
 const adminSecurity = [{ AdminBearerAuth: [] }];
 
 export default async function adminRoutes(app) {
+  app.post('/admin/login', {
+    schema: {
+      tags: ['Administración'],
+      summary: 'Iniciar sesión como administrador',
+      description: 'Intercambia ADMIN_PASSWORD por un token Bearer válido durante 8 horas.',
+      body: {
+        type: 'object',
+        required: ['password'],
+        properties: { password: { type: 'string', minLength: 1 } },
+      },
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            token: { type: 'string' },
+            tokenType: { type: 'string' },
+            expiresIn: { type: 'integer' },
+          },
+          required: ['token', 'tokenType', 'expiresIn'],
+        },
+        401: {
+          type: 'object',
+          properties: { error: { type: 'string' } },
+          required: ['error'],
+        },
+      },
+    },
+  }, async (request, reply) => {
+    if (!process.env.ADMIN_PASSWORD || !process.env.ADMIN_TOKEN_SECRET) {
+      return reply.code(503).send({ error: 'La autenticación de administración no está configurada.' });
+    }
+
+    const { password } = request.body || {};
+    if (!verifyAdminPassword(password)) {
+      return reply.code(401).send({ error: 'Credenciales de administrador no válidas.' });
+    }
+
+    return {
+      token: createAdminToken(),
+      tokenType: 'Bearer',
+      expiresIn: ADMIN_TOKEN_TTL_SECONDS,
+    };
+  });
+
   app.post('/usuarios', {
     preHandler: requireAdmin,
     schema: {
       tags: ['Administración'],
       summary: 'Crear usuario',
-      description: 'Requiere ADMIN_API_KEY. Envía los cinco campos requeridos en el cuerpo JSON.',
+      description: 'Requiere un token Bearer obtenido en /api/admin/login.',
       security: adminSecurity,
       body: {
         type: 'object',
