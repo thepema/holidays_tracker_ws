@@ -83,6 +83,40 @@ app.addHook('preHandler', async (request) => {
   if (token) request.user = await authenticateSession(token);
 });
 
+app.get('/api/health/db', {
+  schema: {
+    tags: ['Health'],
+    summary: 'Comprobar conexión con PostgreSQL',
+    description: 'Ejecuta SELECT 1. Devuelve 200 si la base de datos responde y 503 si no está disponible.',
+    response: {
+      200: {
+        type: 'object',
+        properties: {
+          status: { type: 'string' },
+          database: { type: 'string' },
+        },
+        required: ['status', 'database'],
+      },
+      503: {
+        type: 'object',
+        properties: {
+          status: { type: 'string' },
+          database: { type: 'string' },
+        },
+        required: ['status', 'database'],
+      },
+    },
+  },
+}, async (request, reply) => {
+  try {
+    await pool.query('SELECT 1');
+    return { status: 'ok', database: 'connected' };
+  } catch (error) {
+    request.log.error({ err: error }, 'No se pudo comprobar la conexión con PostgreSQL');
+    return reply.code(503).send({ status: 'error', database: 'unavailable' });
+  }
+});
+
 await app.register(adminRoutes, { prefix: '/api' });
 await app.register(authRoutes, { prefix: '/api' });
 await app.register(vacationRoutes, { prefix: '/api' });
