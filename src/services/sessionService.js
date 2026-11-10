@@ -128,7 +128,6 @@ export async function authenticateSession(token) {
   const { rows } = await pool.query(
     `UPDATE sesiones SET updated_at = NOW()
      WHERE token_hash = $1 AND estado = 'autorizado'
-       AND updated_at > NOW() - INTERVAL '8 hours'
      RETURNING usuario_id`,
     [hashToken(token)],
   );

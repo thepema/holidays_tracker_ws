@@ -28,6 +28,7 @@ Este documento resume la arquitectura, el modelo de dominio, los flujos de auten
     - `GET /api/usuarios`: Lista todos los usuarios excluyendo cargos de administrador (`Administrador`, `Administradora`, `admin`).
     - `GET /api/usuarios/pendientes`: Lista todos los datos de los usuarios con invitación enviada pendiente de activar (`sesiones.estado = 'proceso'`).
     - `POST /api/usuarios`: Crea un usuario en `usuarios`.
+    - `PATCH /api/usuarios/:usuarioId`: Actualiza parcialmente un usuario existente (`nombre`, `apellidos`, `cargo`, `email`, `tipo_vacaciones`).
     - `POST /api/sesiones/invitaciones`: Envía invitación por email a todos los usuarios sin sesión `autorizado`.
     - `POST /api/usuarios/:usuarioId/invitacion`: Envía invitación individual a un usuario.
   - `auth.js`:

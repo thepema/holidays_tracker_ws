@@ -8,6 +8,7 @@ Los endpoints administrativos requieren `Authorization: Bearer <token>` obtenido
 - `GET /api/usuarios` (administrador): obtiene todos los usuarios excluyendo los que tienen cargo de administrador (`Administrador`, `Administradora`, `admin`).
 - `GET /api/usuarios/pendientes` (administrador): obtiene todos los datos de los usuarios a los que se les ha enviado la invitación (`estado = 'proceso'`) y aún no han completado la autenticación.
 - `POST /api/usuarios` (administrador): `{ "nombre", "apellidos", "cargo", "email", "tipo_vacaciones" }`
+- `PATCH /api/usuarios/:usuarioId` (administrador): actualiza parcialmente un usuario existente (`{ nombre?, apellidos?, cargo?, email?, tipo_vacaciones? }`).
 - `POST /api/sesiones/invitaciones` (administrador): envía invitaciones a usuarios sin sesión autorizada.
 - `POST /api/usuarios/:usuarioId/invitacion` (administrador): envía una invitación individual.
 - `POST /api/sesiones/activar`: `{ "codigo": "..." }`; el código de un solo uso llega en el enlace del correo y se valida contra `request_token_hash`. Devuelve el usuario, el `token` de sesión (también emitido como cookie `ht_session`) y el `codigoRecuperacion`.

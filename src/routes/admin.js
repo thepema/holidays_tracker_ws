@@ -1,5 +1,12 @@
 import { requireAdmin, createAdminToken, verifyAdminPassword, ADMIN_TOKEN_TTL_SECONDS } from '../lib/security.js';
-import { createUser, findUserById, listNonAdminUsers, listUsersWithPendingInvitation, listUsersWithoutActiveSession } from '../services/userService.js';
+import {
+  createUser,
+  findUserById,
+  listNonAdminUsers,
+  listUsersWithPendingInvitation,
+  listUsersWithoutActiveSession,
+  updateUser,
+} from '../services/userService.js';
 import { inviteUsersWithoutActiveSession, issueInvitation } from '../services/sessionService.js';
 
 const adminSecurity = [{ AdminBearerAuth: [] }];
@@ -106,6 +113,60 @@ export default async function adminRoutes(app) {
     try {
       const user = await createUser(input);
       return reply.code(201).send({ usuario: user });
+    } catch (error) {
+      if (error.code === '23505') return reply.code(409).send({ error: 'Ya existe un usuario con ese email.' });
+      if (error.code === '23514') return reply.code(400).send({ error: 'Los datos del usuario no son válidos.' });
+      throw error;
+    }
+  });
+
+  app.patch('/usuarios/:usuarioId', {
+    preHandler: requireAdmin,
+    schema: {
+      tags: ['Administración'],
+      summary: 'Editar usuario',
+      description: 'Permite actualizar parcialmente los datos de un usuario. Requiere token Bearer de administrador.',
+      security: adminSecurity,
+      params: {
+        type: 'object',
+        required: ['usuarioId'],
+        properties: { usuarioId: { type: 'integer', minimum: 1 } },
+      },
+      body: {
+        type: 'object',
+        minProperties: 1,
+        additionalProperties: false,
+        properties: {
+          nombre: { type: 'string' },
+          apellidos: { type: 'string' },
+          cargo: { type: 'string' },
+          email: { type: 'string', format: 'email' },
+          tipo_vacaciones: { type: 'string' },
+        },
+      },
+    },
+  }, async (request, reply) => {
+    const { usuarioId } = request.params;
+    const existing = await findUserById(usuarioId);
+    if (!existing) {
+      return reply.code(404).send({ error: 'Usuario no encontrado.' });
+    }
+
+    const updates = request.body || {};
+    const stringKeys = ['nombre', 'apellidos', 'cargo', 'email', 'tipo_vacaciones'];
+    for (const key of stringKeys) {
+      if (updates[key] !== undefined && (typeof updates[key] !== 'string' || !updates[key].trim())) {
+        return reply.code(400).send({ error: `El campo ${key} no puede estar vacío.` });
+      }
+    }
+
+    if (updates.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(updates.email.trim())) {
+      return reply.code(400).send({ error: 'El email no tiene un formato válido.' });
+    }
+
+    try {
+      const updatedUser = await updateUser(usuarioId, updates);
+      return { usuario: updatedUser };
     } catch (error) {
       if (error.code === '23505') return reply.code(409).send({ error: 'Ya existe un usuario con ese email.' });
       if (error.code === '23514') return reply.code(400).send({ error: 'Los datos del usuario no son válidos.' });

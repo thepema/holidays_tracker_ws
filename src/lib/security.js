@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 
 export const SESSION_COOKIE_NAME = 'ht_session';
-export const SESSION_TTL_SECONDS = 60 * 60 * 8;
+export const SESSION_TTL_SECONDS = 60 * 60 * 24 * 365 * 10; // Cookie permanente (10 años)
 export const ADMIN_TOKEN_TTL_SECONDS = 60 * 60 * 8;
 
 export const generateToken = () => crypto.randomBytes(32).toString('base64url');
