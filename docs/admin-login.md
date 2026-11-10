@@ -1,6 +1,6 @@
 # Login de administración
 
-Configura en el archivo `.env` del contenedor/servidor dos secretos que no deben guardarse en el repositorio:
+Configura en el entorno de ejecución dos secretos que no deben guardarse en el repositorio:
 
 ```dotenv
 ADMIN_PASSWORD=una-contraseña-larga-y-aleatoria
@@ -19,7 +19,7 @@ curl -X POST https://TU_API/api/admin/login \
   -d '{"password":"TU_ADMIN_PASSWORD"}'
 ```
 
-Si es correcta, responde con `token`, `tokenType: "Bearer"` y `expiresIn` (28800 segundos). El token firmado expira en 8 horas.
+Si es correcta, responde con `token`, `tokenType: "Bearer"` y `expiresIn` (28800 segundos). El token firmado expira en 8 horas. **No necesitas guardar este token en `.env`**: úsalo en la cabecera `Authorization` de las solicitudes administrativas. En el entorno solo se configuran `ADMIN_PASSWORD` y `ADMIN_TOKEN_SECRET`, que permiten autenticar al administrador y firmar los tokens.
 
 ## Usarlo en endpoints administrativos
 
