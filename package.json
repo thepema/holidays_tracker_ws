@@ -6,7 +6,7 @@
   "description": "API de vacaciones con Fastify y PostgreSQL",
   "scripts": {
     "start": "node src/server.js",
-    "dev": "node --watch src/server.js"
+    "dev": "ENV_FILE=.env && node --watch src/server.js"
   },
   "dependencies": {
     "@fastify/cookie": "^11.0.2",

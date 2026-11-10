@@ -1,4 +1,4 @@
-import { isValidAdminToken, requireAdminOrSession } from '../lib/security.js';
+import { requireAdminOrSession } from '../lib/security.js';
 import { createVacations, listVacations } from '../services/vacationService.js';
 
 const vacationSecurity = [{ AdminBearerAuth: [] }, { SessionCookie: [] }];
@@ -54,10 +54,17 @@ export default async function vacationRoutes(app) {
     if (!request.isAdmin && usuarioId !== undefined) {
       return reply.code(403).send({ error: 'Solo el administrador puede indicar usuarioId.' });
     }
-    const result = await createVacations(request.isAdmin ? usuarioId : request.user.id, fechas);
-    if (result.invalid) {
-      return reply.code(400).send({ error: 'fechas debe ser una lista de 1 a 366 fechas válidas con formato YYYY-MM-DD.' });
+    try {
+      const result = await createVacations(request.isAdmin ? usuarioId : request.user.id, fechas);
+      if (result.invalid) {
+        return reply.code(400).send({ error: 'fechas debe ser una lista de 1 a 366 fechas válidas con formato YYYY-MM-DD.' });
+      }
+      return reply.code(201).send({ guardadas: result.inserted.length, vacaciones: result.inserted });
+    } catch (error) {
+      if (error.code === '23503') {
+        return reply.code(404).send({ error: 'Usuario no encontrado.' });
+      }
+      throw error;
     }
-    return reply.code(201).send({ guardadas: result.inserted.length, vacaciones: result.inserted });
   });
 }

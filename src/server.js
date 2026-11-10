@@ -88,6 +88,9 @@ await app.register(authRoutes, { prefix: '/api' });
 await app.register(vacationRoutes, { prefix: '/api' });
 
 app.setErrorHandler((error, request, reply) => {
+  if (error.validation || error.statusCode === 400) {
+    return reply.code(400).send({ error: 'Datos de entrada no válidos.' });
+  }
   request.log.error({ err: error }, 'Error no controlado en la API');
   return reply.code(500).send({ error: 'Error interno del servidor.' });
 });

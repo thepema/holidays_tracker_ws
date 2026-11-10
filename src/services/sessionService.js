@@ -1,28 +1,31 @@
 import pool from '../db.js';
 import { generateToken, hashToken } from '../lib/security.js';
-import { notifyAdminSessionRequest, sendLoginEmail, sendRecoveryEmail } from './emailService.js';
+import { notifyAdminSessionRequest, sendLoginEmail } from './emailService.js';
 
 export async function issueInvitation(user) {
   const code = generateToken();
-  const codeHash = hashToken(code);
+  const requestTokenHash = hashToken(code);
+  const clearedSessionTokenHash = hashToken(generateToken());
+
   await pool.query(
-    `INSERT INTO sesiones (usuario_id, token_hash, recovery_token_hash, estado)
-     VALUES ($1, $2, NULL, 'proceso')
+    `INSERT INTO sesiones (usuario_id, token_hash, request_token_hash, recovery_token_hash, estado)
+     VALUES ($1, $2, $3, NULL, 'proceso')
      ON CONFLICT (usuario_id) DO UPDATE SET
        token_hash = EXCLUDED.token_hash,
+       request_token_hash = EXCLUDED.request_token_hash,
        recovery_token_hash = NULL,
        estado = 'proceso',
        updated_at = NOW()`,
-    [user.id, codeHash],
+    [user.id, clearedSessionTokenHash, requestTokenHash],
   );
 
   try {
     await sendLoginEmail(user, code);
   } catch (error) {
     await pool.query(
-      `UPDATE sesiones SET estado = 'solicitado', token_hash = $1, updated_at = NOW()
-       WHERE usuario_id = $2 AND token_hash = $3`,
-      [hashToken(generateToken()), user.id, codeHash],
+      `UPDATE sesiones SET estado = 'solicitado', request_token_hash = $1, updated_at = NOW()
+       WHERE usuario_id = $2 AND request_token_hash = $3`,
+      [hashToken(generateToken()), user.id, requestTokenHash],
     );
     throw error;
   }
@@ -48,7 +51,7 @@ export async function activateSession(code) {
     const found = await client.query(
       `SELECT s.usuario_id, u.nombre, u.apellidos, u.email
        FROM sesiones s JOIN usuarios u ON u.id = s.usuario_id
-       WHERE s.token_hash = $1 AND s.estado = 'proceso' FOR UPDATE OF s`,
+       WHERE s.request_token_hash = $1 AND s.estado = 'proceso' FOR UPDATE OF s`,
       [hashToken(code)],
     );
     if (!found.rows[0]) {
@@ -59,15 +62,21 @@ export async function activateSession(code) {
     const user = found.rows[0];
     const sessionToken = generateToken();
     const recoveryCode = generateToken();
+    const invalidatedRequestTokenHash = hashToken(generateToken());
+
     await client.query(
-      `UPDATE sesiones SET token_hash = $1, recovery_token_hash = $2,
-       estado = 'autorizado', updated_at = NOW() WHERE usuario_id = $3`,
-      [hashToken(sessionToken), hashToken(recoveryCode), user.usuario_id],
+      `UPDATE sesiones SET
+         token_hash = $1,
+         request_token_hash = $2,
+         recovery_token_hash = $3,
+         estado = 'autorizado',
+         updated_at = NOW()
+       WHERE usuario_id = $4`,
+      [hashToken(sessionToken), invalidatedRequestTokenHash, hashToken(recoveryCode), user.usuario_id],
     );
     await client.query('COMMIT');
 
-    await sendRecoveryEmail(user, recoveryCode);
-    return { token: sessionToken, user };
+    return { token: sessionToken, user, recoveryCode };
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});
     throw error;
@@ -96,14 +105,17 @@ export async function recoverSession(email, recoveryCode) {
     const token = generateToken();
     const nextRecoveryCode = generateToken();
     await client.query(
-      `UPDATE sesiones SET token_hash = $1, recovery_token_hash = $2,
-       estado = 'autorizado', updated_at = NOW() WHERE usuario_id = $3`,
+      `UPDATE sesiones SET
+         token_hash = $1,
+         recovery_token_hash = $2,
+         estado = 'autorizado',
+         updated_at = NOW()
+       WHERE usuario_id = $3`,
       [hashToken(token), hashToken(nextRecoveryCode), user.usuario_id],
     );
     await client.query('COMMIT');
 
-    await sendRecoveryEmail(user, nextRecoveryCode);
-    return { token, user };
+    return { token, user, recoveryCode: nextRecoveryCode };
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});
     throw error;
@@ -130,19 +142,34 @@ export async function authenticateSession(token) {
 }
 
 export async function requestNewSession(user) {
-  const placeholderHash = hashToken(generateToken());
+  const placeholderTokenHash = hashToken(generateToken());
+  const placeholderRequestTokenHash = hashToken(generateToken());
   await pool.query(
-    `UPDATE sesiones SET token_hash = $1, recovery_token_hash = NULL,
-       estado = 'solicitado', updated_at = NOW() WHERE usuario_id = $2`,
-    [placeholderHash, user.id],
+    `INSERT INTO sesiones (usuario_id, token_hash, request_token_hash, recovery_token_hash, estado)
+     VALUES ($1, $2, $3, NULL, 'solicitado')
+     ON CONFLICT (usuario_id) DO UPDATE SET
+       token_hash = EXCLUDED.token_hash,
+       request_token_hash = EXCLUDED.request_token_hash,
+       recovery_token_hash = NULL,
+       estado = 'solicitado',
+       updated_at = NOW()`,
+    [user.id, placeholderTokenHash, placeholderRequestTokenHash],
   );
   await notifyAdminSessionRequest(user);
 }
 
 export async function revokeSession(userId) {
+  const placeholderTokenHash = hashToken(generateToken());
+  const placeholderRequestTokenHash = hashToken(generateToken());
   await pool.query(
-    `UPDATE sesiones SET token_hash = $1, recovery_token_hash = NULL,
-       estado = 'solicitado', updated_at = NOW() WHERE usuario_id = $2`,
-    [hashToken(generateToken()), userId],
+    `INSERT INTO sesiones (usuario_id, token_hash, request_token_hash, recovery_token_hash, estado)
+     VALUES ($1, $2, $3, NULL, 'solicitado')
+     ON CONFLICT (usuario_id) DO UPDATE SET
+       token_hash = EXCLUDED.token_hash,
+       request_token_hash = EXCLUDED.request_token_hash,
+       recovery_token_hash = NULL,
+       estado = 'solicitado',
+       updated_at = NOW()`,
+    [userId, placeholderTokenHash, placeholderRequestTokenHash],
   );
 }

@@ -19,6 +19,31 @@ export async function findUserById(id) {
   return rows[0] || null;
 }
 
+export async function listNonAdminUsers() {
+  const { rows } = await pool.query(
+    `SELECT u.id, u.nombre, u.apellidos, u.cargo, u.email, u.tipo_vacaciones, u.created_at, u.updated_at,
+            s.estado AS estado_sesion
+     FROM usuarios u
+     LEFT JOIN sesiones s ON s.usuario_id = u.id
+     WHERE LOWER(TRIM(u.cargo)) NOT IN ('administrador', 'administradora', 'admin')
+     ORDER BY u.id ASC`,
+  );
+  return rows;
+}
+
+export async function listUsersWithPendingInvitation() {
+  const { rows } = await pool.query(
+    `SELECT u.id, u.nombre, u.apellidos, u.cargo, u.email, u.tipo_vacaciones, u.created_at, u.updated_at,
+            s.estado AS estado_sesion
+     FROM usuarios u
+     INNER JOIN sesiones s ON s.usuario_id = u.id
+     WHERE s.estado = 'proceso'
+       AND LOWER(TRIM(u.cargo)) NOT IN ('administrador', 'administradora', 'admin')
+     ORDER BY u.id ASC`,
+  );
+  return rows;
+}
+
 export async function listUsersWithoutActiveSession() {
   const { rows } = await pool.query(
     `SELECT u.id, u.nombre, u.apellidos, u.email

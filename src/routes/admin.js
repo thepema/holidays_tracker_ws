@@ -1,5 +1,5 @@
 import { requireAdmin, createAdminToken, verifyAdminPassword, ADMIN_TOKEN_TTL_SECONDS } from '../lib/security.js';
-import { createUser, findUserById, listUsersWithoutActiveSession } from '../services/userService.js';
+import { createUser, findUserById, listNonAdminUsers, listUsersWithPendingInvitation, listUsersWithoutActiveSession } from '../services/userService.js';
 import { inviteUsersWithoutActiveSession, issueInvitation } from '../services/sessionService.js';
 
 const adminSecurity = [{ AdminBearerAuth: [] }];
@@ -47,6 +47,32 @@ export default async function adminRoutes(app) {
       tokenType: 'Bearer',
       expiresIn: ADMIN_TOKEN_TTL_SECONDS,
     };
+  });
+
+  app.get('/usuarios', {
+    preHandler: requireAdmin,
+    schema: {
+      tags: ['Administración'],
+      summary: 'Obtener usuarios (excluyendo administrador)',
+      description: 'Devuelve todos los usuarios cuyo cargo no sea de administrador. Requiere un token Bearer obtenido en /api/admin/login.',
+      security: adminSecurity,
+    },
+  }, async () => {
+    const usuarios = await listNonAdminUsers();
+    return { usuarios };
+  });
+
+  app.get('/usuarios/pendientes', {
+    preHandler: requireAdmin,
+    schema: {
+      tags: ['Administración'],
+      summary: 'Obtener usuarios con invitación enviada pendiente de activar',
+      description: 'Devuelve todos los datos de los usuarios a los que se les ha enviado la invitación (estado `proceso`) y aún no han completado la autenticación.',
+      security: adminSecurity,
+    },
+  }, async () => {
+    const usuarios = await listUsersWithPendingInvitation();
+    return { usuarios };
   });
 
   app.post('/usuarios', {

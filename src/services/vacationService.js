@@ -45,7 +45,7 @@ export async function listVacations(userIds = null) {
   const { rows } = await pool.query(
     `SELECT id, usuario_id AS "usuarioId", anio, fecha
      FROM vacaciones
-     WHERE $1::integer[] IS NULL OR usuario_id = ANY($1::integer[])
+     WHERE $1::bigint[] IS NULL OR usuario_id = ANY($1::bigint[])
      ORDER BY fecha ASC, id ASC`,
     [filter],
   );

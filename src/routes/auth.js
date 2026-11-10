@@ -15,9 +15,30 @@ export default async function authRoutes(app) {
         required: ['codigo'],
         properties: { codigo: { type: 'string', minLength: 20, maxLength: 200 } },
       },
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            usuario: {
+              type: 'object',
+              properties: {
+                id: { type: 'integer' },
+                nombre: { type: 'string' },
+                apellidos: { type: 'string' },
+                email: { type: 'string' },
+                cargo: { type: 'string' },
+                tipo_vacaciones: { type: 'string' },
+              },
+            },
+            token: { type: 'string' },
+            codigoRecuperacion: { type: 'string' },
+          },
+          required: ['usuario', 'token', 'codigoRecuperacion'],
+        },
+      },
     },
   }, async (request, reply) => {
-    const { codigo } = request.body || {};
+    const codigo = request.body?.codigo || request.query?.codigo;
     if (typeof codigo !== 'string' || codigo.length < 20 || codigo.length > 200) {
       return reply.code(400).send({ error: 'Se requiere un código de acceso válido.' });
     }
@@ -25,7 +46,11 @@ export default async function authRoutes(app) {
       const result = await activateSession(codigo);
       if (!result) return reply.code(401).send({ error: 'El código no es válido o ya fue utilizado.' });
       setSessionCookie(reply, result.token);
-      return { usuario: result.user };
+      return {
+        usuario: result.user,
+        token: result.token,
+        codigoRecuperacion: result.recoveryCode,
+      };
     } catch (error) {
       request.log.error({ err: error }, 'No se pudo activar la sesión');
       return reply.code(503).send({ error: 'No se pudo activar la sesión.' });
@@ -44,6 +69,27 @@ export default async function authRoutes(app) {
           codigoRecuperacion: { type: 'string' },
         },
       },
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            usuario: {
+              type: 'object',
+              properties: {
+                id: { type: 'integer' },
+                nombre: { type: 'string' },
+                apellidos: { type: 'string' },
+                email: { type: 'string' },
+                cargo: { type: 'string' },
+                tipo_vacaciones: { type: 'string' },
+              },
+            },
+            token: { type: 'string' },
+            codigoRecuperacion: { type: 'string' },
+          },
+          required: ['usuario', 'token', 'codigoRecuperacion'],
+        },
+      },
     },
   }, async (request, reply) => {
     const { email, codigoRecuperacion } = request.body || {};
@@ -54,7 +100,11 @@ export default async function authRoutes(app) {
       const result = await recoverSession(email, codigoRecuperacion);
       if (!result) return reply.code(401).send({ error: 'Los datos de recuperación no son válidos.' });
       setSessionCookie(reply, result.token);
-      return { usuario: result.user };
+      return {
+        usuario: result.user,
+        token: result.token,
+        codigoRecuperacion: result.recoveryCode,
+      };
     } catch (error) {
       request.log.error({ err: error }, 'No se pudo recuperar la sesión');
       return reply.code(503).send({ error: 'No se pudo recuperar la sesión.' });
@@ -98,7 +148,7 @@ export default async function authRoutes(app) {
     schema: {
       tags: ['Sesiones'],
       summary: 'Revocar la sesión de un usuario',
-      description: 'Solo el administrador puede revocar sesiones. Los usuarios pueden recuperar el acceso mediante su código de recuperación.',
+      description: 'Solo el administrador puede revocar sesiones. Invalida la sesión y el código de recuperación; para volver a acceder se debe solicitar o enviar una nueva invitación.',
       security: adminSecurity,
       body: {
         type: 'object',
