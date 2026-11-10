@@ -11,7 +11,7 @@ export default async function authRoutes(app) {
       body: {
         type: 'object',
         required: ['codigo'],
-        properties: { codigo: { type: 'string', minLength: 20, maxLength: 200, example: 'código-recibido-por-correo' } },
+        properties: { codigo: { type: 'string', minLength: 20, maxLength: 200 } },
       },
     },
   }, async (request, reply) => {
@@ -38,8 +38,8 @@ export default async function authRoutes(app) {
         type: 'object',
         required: ['email', 'codigoRecuperacion'],
         properties: {
-          email: { type: 'string', format: 'email', example: 'ana@example.com' },
-          codigoRecuperacion: { type: 'string', example: 'código-de-recuperación' },
+          email: { type: 'string', format: 'email' },
+          codigoRecuperacion: { type: 'string' },
         },
       },
     },

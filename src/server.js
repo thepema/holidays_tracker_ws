@@ -1,6 +1,8 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import cookie from '@fastify/cookie';
+import swagger from '@fastify/swagger';
+import swaggerUi from '@fastify/swagger-ui';
 import pool from './db.js';
 import adminRoutes from './routes/admin.js';
 import authRoutes from './routes/auth.js';
@@ -32,6 +34,46 @@ await app.register(cors, {
   credentials: true,
 });
 await app.register(cookie);
+
+// Register Swagger before API routes so Fastify can collect their schemas.
+await app.register(swagger, {
+  openapi: {
+    openapi: '3.0.3',
+    info: {
+      title: 'Holiday Tracker API',
+      description: 'API para administrar usuarios, sesiones y vacaciones.',
+      version: '1.0.0',
+    },
+    servers: [{ url: '/', description: 'Servidor actual' }],
+    components: {
+      securitySchemes: {
+        AdminBearerAuth: {
+          type: 'http',
+          scheme: 'bearer',
+          bearerFormat: 'API key',
+          description: 'Introduce ADMIN_API_KEY como token Bearer.',
+        },
+        SessionCookie: {
+          type: 'apiKey',
+          in: 'cookie',
+          name: SESSION_COOKIE_NAME,
+          description: 'Cookie establecida al activar o recuperar una sesión.',
+        },
+      },
+    },
+  },
+});
+
+await app.register(swaggerUi, {
+  routePrefix: '/docs',
+  uiConfig: {
+    docExpansion: 'list',
+    deepLinking: true,
+    persistAuthorization: true,
+    withCredentials: true,
+  },
+});
+
 app.decorateRequest('user', null);
 
 app.get('/', async () => ({ message: 'Holiday Tracker API' }));

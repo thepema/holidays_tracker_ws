@@ -2,8 +2,29 @@ import { requireAdmin } from '../lib/security.js';
 import { createUser, findUserById, listUsersWithoutActiveSession } from '../services/userService.js';
 import { inviteUsersWithoutActiveSession, issueInvitation } from '../services/sessionService.js';
 
+const adminSecurity = [{ AdminBearerAuth: [] }];
+
 export default async function adminRoutes(app) {
-  app.post('/usuarios', { preHandler: requireAdmin }, async (request, reply) => {
+  app.post('/usuarios', {
+    preHandler: requireAdmin,
+    schema: {
+      tags: ['Administración'],
+      summary: 'Crear usuario',
+      description: 'Requiere ADMIN_API_KEY. Envía los cinco campos requeridos en el cuerpo JSON.',
+      security: adminSecurity,
+      body: {
+        type: 'object',
+        required: ['nombre', 'apellidos', 'cargo', 'email', 'tipo_vacaciones'],
+        properties: {
+          nombre: { type: 'string' },
+          apellidos: { type: 'string' },
+          cargo: { type: 'string' },
+          email: { type: 'string', format: 'email' },
+          tipo_vacaciones: { type: 'string' },
+        },
+      },
+    },
+  }, async (request, reply) => {
     const input = request.body || {};
     const required = ['nombre', 'apellidos', 'cargo', 'email', 'tipo_vacaciones'];
     if (required.some((key) => typeof input[key] !== 'string' || !input[key].trim())) {
@@ -22,13 +43,32 @@ export default async function adminRoutes(app) {
     }
   });
 
-  app.post('/sesiones/invitaciones', { preHandler: requireAdmin }, async () => {
+  app.post('/sesiones/invitaciones', {
+    preHandler: requireAdmin,
+    schema: {
+      tags: ['Administración'],
+      summary: 'Invitar usuarios sin sesión activa',
+      security: adminSecurity,
+    },
+  }, async () => {
     const users = await listUsersWithoutActiveSession();
     const result = await inviteUsersWithoutActiveSession(users);
     return { total: users.length, enviadas: result.sent, fallidas: result.failed };
   });
 
-  app.post('/usuarios/:usuarioId/invitacion', { preHandler: requireAdmin }, async (request, reply) => {
+  app.post('/usuarios/:usuarioId/invitacion', {
+    preHandler: requireAdmin,
+    schema: {
+      tags: ['Administración'],
+      summary: 'Enviar invitación a un usuario',
+      security: adminSecurity,
+      params: {
+        type: 'object',
+        required: ['usuarioId'],
+        properties: { usuarioId: { type: 'integer', minimum: 1 } },
+      },
+    },
+  }, async (request, reply) => {
     const user = await findUserById(request.params.usuarioId);
     if (!user) return reply.code(404).send({ error: 'Usuario no encontrado.' });
     try {
