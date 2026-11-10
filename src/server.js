@@ -3,7 +3,6 @@ import cors from '@fastify/cors';
 import cookie from '@fastify/cookie';
 import swagger from '@fastify/swagger';
 import swaggerUi from '@fastify/swagger-ui';
-import pool from './db.js';
 import adminRoutes from './routes/admin.js';
 import authRoutes from './routes/auth.js';
 import vacationRoutes from './routes/vacations.js';
@@ -50,14 +49,14 @@ await app.register(swagger, {
         AdminBearerAuth: {
           type: 'http',
           scheme: 'bearer',
-          bearerFormat: 'API key',
-          description: 'Introduce ADMIN_API_KEY como token Bearer.',
+          bearerFormat: 'JWT',
+          description: 'Token Bearer obtenido en POST /api/admin/login.',
         },
         SessionCookie: {
           type: 'apiKey',
           in: 'cookie',
           name: SESSION_COOKIE_NAME,
-          description: 'Cookie establecida al activar o recuperar una sesión.',
+          description: 'Cookie establecida al activar o recuperar una sesión de usuario.',
         },
       },
     },
@@ -75,46 +74,13 @@ await app.register(swaggerUi, {
 });
 
 app.decorateRequest('user', null);
+app.decorateRequest('isAdmin', false);
 
 app.get('/', async () => ({ message: 'Holiday Tracker API' }));
 
 app.addHook('preHandler', async (request) => {
   const token = request.cookies?.[SESSION_COOKIE_NAME];
   if (token) request.user = await authenticateSession(token);
-});
-
-app.get('/api/health/db', {
-  schema: {
-    tags: ['Health'],
-    summary: 'Comprobar conexión con PostgreSQL',
-    description: 'Ejecuta SELECT 1. Devuelve 200 si la base de datos responde y 503 si no está disponible.',
-    response: {
-      200: {
-        type: 'object',
-        properties: {
-          status: { type: 'string' },
-          database: { type: 'string' },
-        },
-        required: ['status', 'database'],
-      },
-      503: {
-        type: 'object',
-        properties: {
-          status: { type: 'string' },
-          database: { type: 'string' },
-        },
-        required: ['status', 'database'],
-      },
-    },
-  },
-}, async (request, reply) => {
-  try {
-    await pool.query('SELECT 1');
-    return { status: 'ok', database: 'connected' };
-  } catch (error) {
-    request.log.error({ err: error }, 'No se pudo comprobar la conexión con PostgreSQL');
-    return reply.code(503).send({ status: 'error', database: 'unavailable' });
-  }
 });
 
 await app.register(adminRoutes, { prefix: '/api' });
@@ -132,7 +98,6 @@ const start = async () => {
     await app.listen({ host: '0.0.0.0', port });
   } catch (error) {
     app.log.error(error);
-    await pool.end();
     process.exit(1);
   }
 };

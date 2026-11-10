@@ -70,15 +70,28 @@ export function isValidAdminToken(token) {
   }
 }
 
+function getBearerToken(request) {
+  return request.headers.authorization?.replace(/^Bearer\s+/i, '') || '';
+}
+
 export async function requireAdmin(request, reply) {
   if (!process.env.ADMIN_PASSWORD || !process.env.ADMIN_TOKEN_SECRET) {
     return reply.code(503).send({ error: 'La autenticación de administración no está configurada.' });
   }
 
-  const supplied = request.headers.authorization?.replace(/^Bearer\s+/i, '') || '';
-  if (!isValidAdminToken(supplied)) {
+  if (!isValidAdminToken(getBearerToken(request))) {
     return reply.code(401).send({ error: 'No autorizado.' });
   }
+  request.isAdmin = true;
+}
+
+export async function requireAdminOrSession(request, reply) {
+  if (isValidAdminToken(getBearerToken(request))) {
+    request.isAdmin = true;
+    return;
+  }
+  request.isAdmin = false;
+  return requireSession(request, reply);
 }
 
 export async function requireSession(request, reply) {

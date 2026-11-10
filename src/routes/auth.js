@@ -1,7 +1,9 @@
-import { clearSessionCookie, requireSession, setSessionCookie } from '../lib/security.js';
+import { clearSessionCookie, requireAdmin, requireAdminOrSession, setSessionCookie } from '../lib/security.js';
 import { activateSession, recoverSession, requestNewSession, revokeSession } from '../services/sessionService.js';
+import { findUserById } from '../services/userService.js';
 
-const sessionSecurity = [{ SessionCookie: [] }];
+const sessionSecurity = [{ SessionCookie: [] }, { AdminBearerAuth: [] }];
+const adminSecurity = [{ AdminBearerAuth: [] }];
 
 export default async function authRoutes(app) {
   app.post('/sesiones/activar', {
@@ -60,16 +62,30 @@ export default async function authRoutes(app) {
   });
 
   app.post('/sesiones/solicitar', {
-    preHandler: requireSession,
+    preHandler: requireAdminOrSession,
     schema: {
       tags: ['Sesiones'],
       summary: 'Solicitar una nueva sesión al administrador',
+      description: 'El usuario autenticado solicita su propia sesión. El administrador debe indicar usuarioId.',
       security: sessionSecurity,
+      body: {
+        type: 'object',
+        properties: { usuarioId: { type: 'integer', minimum: 1 } },
+      },
     },
   }, async (request, reply) => {
     try {
-      await requestNewSession(request.user);
-      clearSessionCookie(reply);
+      let user = request.user;
+      if (request.isAdmin) {
+        const { usuarioId } = request.body || {};
+        if (!Number.isInteger(usuarioId) || usuarioId < 1) {
+          return reply.code(400).send({ error: 'El administrador debe indicar un usuarioId válido.' });
+        }
+        user = await findUserById(usuarioId);
+        if (!user) return reply.code(404).send({ error: 'Usuario no encontrado.' });
+      }
+      await requestNewSession(user);
+      if (!request.isAdmin) clearSessionCookie(reply);
       return reply.code(202).send({ mensaje: 'Solicitud enviada al administrador.' });
     } catch (error) {
       request.log.error({ err: error }, 'No se pudo enviar la solicitud de sesión');
@@ -78,15 +94,26 @@ export default async function authRoutes(app) {
   });
 
   app.post('/sesiones/cerrar', {
-    preHandler: requireSession,
+    preHandler: requireAdmin,
     schema: {
       tags: ['Sesiones'],
-      summary: 'Cerrar sesión',
-      security: sessionSecurity,
+      summary: 'Revocar la sesión de un usuario',
+      description: 'Solo el administrador puede revocar sesiones. Los usuarios pueden recuperar el acceso mediante su código de recuperación.',
+      security: adminSecurity,
+      body: {
+        type: 'object',
+        required: ['usuarioId'],
+        properties: { usuarioId: { type: 'integer', minimum: 1 } },
+      },
     },
   }, async (request, reply) => {
-    await revokeSession(request.user.id);
-    clearSessionCookie(reply);
-    return { cerrado: true };
+    const { usuarioId } = request.body || {};
+    if (!Number.isInteger(usuarioId) || usuarioId < 1) {
+      return reply.code(400).send({ error: 'Se requiere un usuarioId válido.' });
+    }
+    const user = await findUserById(usuarioId);
+    if (!user) return reply.code(404).send({ error: 'Usuario no encontrado.' });
+    await revokeSession(usuarioId);
+    return { cerrado: true, usuarioId };
   });
 }

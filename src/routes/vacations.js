@@ -1,31 +1,42 @@
-import { requireSession } from '../lib/security.js';
+import { isValidAdminToken, requireAdminOrSession } from '../lib/security.js';
 import { createVacations, listVacations } from '../services/vacationService.js';
 
-const sessionSecurity = [{ SessionCookie: [] }];
+const vacationSecurity = [{ AdminBearerAuth: [] }, { SessionCookie: [] }];
 
 export default async function vacationRoutes(app) {
   app.get('/vacaciones', {
-    preHandler: requireSession,
+    preHandler: requireAdminOrSession,
     schema: {
       tags: ['Vacaciones'],
-      summary: 'Consultar las vacaciones del usuario autenticado',
-      security: sessionSecurity,
+      summary: 'Consultar vacaciones de usuarios o todas las vacaciones como administrador',
+      description: 'El administrador puede filtrar por una lista de IDs en `usuarios`; si no se envía o está vacía, devuelve todas. Un usuario con sesión solo ve sus propias vacaciones.',
+      security: vacationSecurity,
+      querystring: {
+        type: 'object',
+        properties: {
+          usuarios: { type: 'array', items: { type: 'integer', minimum: 1 }, description: 'IDs de usuario. Para administradores, lista vacía o ausente significa todos.' },
+        },
+      },
     },
-  }, async (request) => ({
-    vacaciones: await listVacations(request.user.id),
-  }));
+  }, async (request) => {
+    const userIds = request.isAdmin
+      ? (request.query.usuarios || [])
+      : [request.user.id];
+    return { vacaciones: await listVacations(userIds) };
+  });
 
   app.post('/vacaciones', {
-    preHandler: requireSession,
+    preHandler: requireAdminOrSession,
     schema: {
       tags: ['Vacaciones'],
       summary: 'Registrar fechas de vacaciones',
-      description: 'Acepta entre 1 y 366 fechas con formato YYYY-MM-DD. Las fechas ya guardadas se ignoran.',
-      security: sessionSecurity,
+      description: 'Acepta entre 1 y 366 fechas con formato YYYY-MM-DD. El administrador debe indicar usuarioId; un usuario crea fechas solo para sí mismo. Las fechas ya guardadas se ignoran.',
+      security: vacationSecurity,
       body: {
         type: 'object',
         required: ['fechas'],
         properties: {
+          usuarioId: { type: 'integer', minimum: 1 },
           fechas: {
             type: 'array',
             minItems: 1,
@@ -36,8 +47,14 @@ export default async function vacationRoutes(app) {
       },
     },
   }, async (request, reply) => {
-    const { fechas } = request.body || {};
-    const result = await createVacations(request.user.id, fechas);
+    const { fechas, usuarioId } = request.body || {};
+    if (request.isAdmin && (!Number.isInteger(usuarioId) || usuarioId < 1)) {
+      return reply.code(400).send({ error: 'El administrador debe indicar un usuarioId válido.' });
+    }
+    if (!request.isAdmin && usuarioId !== undefined) {
+      return reply.code(403).send({ error: 'Solo el administrador puede indicar usuarioId.' });
+    }
+    const result = await createVacations(request.isAdmin ? usuarioId : request.user.id, fechas);
     if (result.invalid) {
       return reply.code(400).send({ error: 'fechas debe ser una lista de 1 a 366 fechas válidas con formato YYYY-MM-DD.' });
     }
