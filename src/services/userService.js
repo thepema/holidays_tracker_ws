@@ -19,6 +19,36 @@ export async function findUserById(id) {
   return rows[0] || null;
 }
 
+export async function findUserByEmail(email) {
+  const cleanEmail = String(email || '').trim().toLowerCase();
+  if (!cleanEmail) return null;
+  const { rows } = await pool.query(
+    `SELECT ${USER_FIELDS} FROM usuarios WHERE LOWER(TRIM(email)) = $1 LIMIT 1`,
+    [cleanEmail],
+  );
+  return rows[0] || null;
+}
+
+export async function findUserByNameAndEmail(nombre, email) {
+  const cleanName = String(nombre || '').trim().replace(/\s+/g, ' ');
+  const cleanEmail = String(email || '').trim().toLowerCase();
+  if (!cleanName || !cleanEmail) return null;
+
+  const { rows } = await pool.query(
+    `SELECT ${USER_FIELDS}
+     FROM usuarios
+     WHERE LOWER(TRIM(email)) = $1
+       AND (
+         LOWER(TRIM(nombre)) = LOWER($2)
+         OR LOWER(TRIM(nombre || ' ' || apellidos)) = LOWER($2)
+         OR LOWER(TRIM(nombre || ' ' || apellidos)) LIKE LOWER($2) || ' %'
+       )
+     LIMIT 1`,
+    [cleanEmail, cleanName],
+  );
+  return rows[0] || null;
+}
+
 export async function updateUser(id, updates) {
   const fields = [];
   const values = [];
@@ -81,7 +111,7 @@ export async function listUsersWithPendingInvitation() {
             s.estado AS estado_sesion
      FROM usuarios u
      INNER JOIN sesiones s ON s.usuario_id = u.id
-     WHERE s.estado = 'proceso'
+     WHERE s.estado != 'autorizado'
        AND LOWER(TRIM(u.cargo)) NOT IN ('administrador', 'administradora', 'admin')
      ORDER BY u.id ASC`,
   );
@@ -93,7 +123,8 @@ export async function listUsersWithoutActiveSession() {
     `SELECT u.id, u.nombre, u.apellidos, u.email
      FROM usuarios u
      LEFT JOIN sesiones s ON s.usuario_id = u.id
-     WHERE s.usuario_id IS NULL OR s.estado <> 'autorizado'
+     WHERE (s.usuario_id IS NULL OR s.estado NOT IN ('autorizado', 'proceso'))
+       AND LOWER(TRIM(u.cargo)) NOT IN ('administrador', 'administradora', 'admin')
      ORDER BY u.id`,
   );
   return rows;

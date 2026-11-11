@@ -1,5 +1,10 @@
 import { requireAdminOrSession } from '../lib/security.js';
-import { createVacations, listVacations } from '../services/vacationService.js';
+import {
+  createVacations,
+  deleteVacation,
+  listVacations,
+  updateVacationDate,
+} from '../services/vacationService.js';
 
 const vacationSecurity = [{ AdminBearerAuth: [] }, { SessionCookie: [] }];
 
@@ -51,8 +56,8 @@ export default async function vacationRoutes(app) {
     if (request.isAdmin && (!Number.isInteger(usuarioId) || usuarioId < 1)) {
       return reply.code(400).send({ error: 'El administrador debe indicar un usuarioId válido.' });
     }
-    if (!request.isAdmin && usuarioId !== undefined) {
-      return reply.code(403).send({ error: 'Solo el administrador puede indicar usuarioId.' });
+    if (!request.isAdmin && usuarioId !== undefined && Number(usuarioId) !== Number(request.user.id)) {
+      return reply.code(403).send({ error: 'Solo el administrador puede indicar otro usuarioId.' });
     }
     try {
       const result = await createVacations(request.isAdmin ? usuarioId : request.user.id, fechas);
@@ -66,5 +71,87 @@ export default async function vacationRoutes(app) {
       }
       throw error;
     }
+  });
+
+  app.patch('/vacaciones/:vacacionId', {
+    preHandler: requireAdminOrSession,
+    schema: {
+      tags: ['Vacaciones'],
+      summary: 'Modificar la fecha de un día de vacaciones (si aún no ha pasado)',
+      security: vacationSecurity,
+      params: {
+        type: 'object',
+        required: ['vacacionId'],
+        properties: { vacacionId: { type: 'integer', minimum: 1 } },
+      },
+      body: {
+        type: 'object',
+        required: ['fecha'],
+        properties: {
+          fecha: { type: 'string', format: 'date' },
+        },
+      },
+    },
+  }, async (request, reply) => {
+    const { vacacionId } = request.params;
+    const { fecha } = request.body || {};
+    const result = await updateVacationDate(
+      vacacionId,
+      request.user?.id,
+      fecha,
+      request.isAdmin
+    );
+
+    if (result.invalid) {
+      return reply.code(400).send({ error: 'La nueva fecha debe tener formato válido YYYY-MM-DD.' });
+    }
+    if (result.pastTargetDate) {
+      return reply.code(400).send({ error: 'No puedes cambiar un día de vacaciones a una fecha que ya ha pasado.' });
+    }
+    if (result.notFound) {
+      return reply.code(404).send({ error: 'Día de vacaciones no encontrado.' });
+    }
+    if (result.forbidden) {
+      return reply.code(403).send({ error: 'No tienes permiso para modificar este día de vacaciones.' });
+    }
+    if (result.pastDate) {
+      return reply.code(400).send({ error: 'No se pueden modificar días de vacaciones cuya fecha ya ha pasado.' });
+    }
+    if (result.duplicate) {
+      return reply.code(409).send({ error: 'Ya tienes registrado ese día de vacaciones.' });
+    }
+    return { vacacion: result.updated };
+  });
+
+  app.delete('/vacaciones/:vacacionId', {
+    preHandler: requireAdminOrSession,
+    schema: {
+      tags: ['Vacaciones'],
+      summary: 'Eliminar / cancelar un día de vacaciones (si aún no ha pasado)',
+      security: vacationSecurity,
+      params: {
+        type: 'object',
+        required: ['vacacionId'],
+        properties: { vacacionId: { type: 'integer', minimum: 1 } },
+      },
+    },
+  }, async (request, reply) => {
+    const { vacacionId } = request.params;
+    const result = await deleteVacation(
+      vacacionId,
+      request.user?.id,
+      request.isAdmin
+    );
+
+    if (result.notFound) {
+      return reply.code(404).send({ error: 'Día de vacaciones no encontrado.' });
+    }
+    if (result.forbidden) {
+      return reply.code(403).send({ error: 'No tienes permiso para eliminar este día de vacaciones.' });
+    }
+    if (result.pastDate) {
+      return reply.code(400).send({ error: 'No se pueden eliminar días de vacaciones cuya fecha ya ha pasado.' });
+    }
+    return { eliminado: true, id: result.id };
   });
 }

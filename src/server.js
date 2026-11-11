@@ -31,6 +31,7 @@ const localOrigins = new Set([
 await app.register(cors, {
   origin: (origin, callback) => callback(null, isTrustedOrigin(origin) || localOrigins.has(origin)),
   credentials: true,
+  methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
 });
 await app.register(cookie);
 
@@ -79,7 +80,10 @@ app.decorateRequest('isAdmin', false);
 app.get('/', async () => ({ message: 'Holiday Tracker API' }));
 
 app.addHook('preHandler', async (request) => {
-  const token = request.cookies?.[SESSION_COOKIE_NAME];
+  const headerToken = request.headers['x-session-token'];
+  const token =
+    request.cookies?.[SESSION_COOKIE_NAME] ||
+    (typeof headerToken === 'string' && headerToken.trim() ? headerToken.trim() : '');
   if (token) request.user = await authenticateSession(token);
 });
 

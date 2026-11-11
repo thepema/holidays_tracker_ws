@@ -184,7 +184,12 @@ export default async function adminRoutes(app) {
   }, async () => {
     const users = await listUsersWithoutActiveSession();
     const result = await inviteUsersWithoutActiveSession(users);
-    return { total: users.length, enviadas: result.sent, fallidas: result.failed };
+    return {
+      total: users.length,
+      enviadas: result.sent,
+      fallidas: result.failed,
+      omitidas: result.skipped || 0,
+    };
   });
 
   app.post('/usuarios/:usuarioId/invitacion', {
@@ -203,7 +208,14 @@ export default async function adminRoutes(app) {
     const user = await findUserById(request.params.usuarioId);
     if (!user) return reply.code(404).send({ error: 'Usuario no encontrado.' });
     try {
-      await issueInvitation(user);
+      const result = await issueInvitation(user);
+      if (result?.alreadyInProcess) {
+        return reply.code(409).send({
+          error: 'El usuario ya tiene una invitación en proceso.',
+          yaEnProceso: true,
+          enviada: false,
+        });
+      }
       return { enviada: true };
     } catch {
       return reply.code(503).send({ error: 'No se pudo enviar la invitación. Revisa la configuración de correo.' });

@@ -81,20 +81,23 @@ CREATE TABLE vacaciones (
 ```
 
 ### Flujo de Sesiones
-1. **Invitación / Petición de sesión (`issueInvitation`)**:
-   - Invalida cualquier sesión previa asignando un hash aleatorio a `token_hash` y `recovery_token_hash = NULL`.
-   - Genera el token de petición y almacena su hash SHA-256 en `request_token_hash`.
-   - Establece `estado = 'proceso'` y envía el enlace por correo electrónico.
-2. **Activación (`activateSession` en `POST /api/sesiones/activar`)**:
-   - Identifica al usuario por `s.request_token_hash = hashToken(codigo)` con `s.estado = 'proceso'`.
-   - Genera el token de sesión (`token_hash`), el código de recuperación (`recovery_token_hash`) e invalida el `request_token_hash`.
+1. **Invitación / Petición de sesión (`requestNewSession` / `issueInvitation`)**:
+   - Comprueba si el usuario ya tiene una sesión en estado `proceso`: si ya está en proceso, no vuelve a generar token ni a enviar correo.
+   - Si no está en proceso, deja `token_hash = NULL` (o `''`), genera el token de solicitud y almacena su hash SHA-256 en `request_token_hash`.
+   - Establece `recovery_token_hash = NULL` y `estado = 'proceso'`.
+   - Construye la URL de acceso en `${APP_URL}/invitacion/<request_token>` y la envía por correo electrónico (o muestra en logs para desarrollo).
+2. **Activación (`activateSession` en `POST /api/sesiones/activar` o `POST /api/sesiones/activar/:codigo`)**:
+   - Identifica al usuario consultando `WHERE s.request_token_hash = hashToken(request_token) AND s.estado = 'proceso'`.
+   - Borra de BD el token de petición (`request_token_hash = ''`).
+   - Genera el token de sesión real y almacena su hash en `token_hash`.
+   - Genera el código de recuperación (`recovery_token_hash`).
    - Pasa el estado a `'autorizado'`.
-   - Devuelve en la respuesta JSON los datos del usuario, el `token` de sesión y el `codigoRecuperacion` (además de fijar la cookie HTTP-only `ht_session`).
+   - Establece la cookie HTTP-only `ht_session` con el token de sesión generado y devuelve en el cuerpo JSON `{ usuario, token, codigoRecuperacion }`.
 3. **Recuperación (`recoverSession` en `POST /api/sesiones/recuperar`)**:
    - Valida el `recovery_token_hash` y `estado = 'autorizado'`.
    - Rota el token de sesión y el código de recuperación, devolviendo el nuevo código en la respuesta.
-4. **Cierre / Revocación (`revokeSession` / `requestNewSession`)**:
-   - Elimina la sesión activa e invalida recovery token (`recovery_token_hash = NULL`), dejando `estado = 'solicitado'`. Requiere una nueva invitación para volver a acceder.
+4. **Cierre / Revocación (`revokeSession`)**:
+   - Deja `token_hash = ''`, `request_token_hash = ''`, `recovery_token_hash = NULL` y `estado = 'solicitado'`. Requiere solicitar o enviar una nueva invitación para volver a acceder.
 
 ---
 

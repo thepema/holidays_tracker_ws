@@ -21,14 +21,17 @@ function getTransporter() {
 }
 
 export async function sendLoginEmail(user, code) {
-  const loginUrl = new URL('/login', process.env.APP_URL || 'http://localhost:4200');
-  loginUrl.searchParams.set('code', code);
-  await getTransporter().sendMail({
-    from: process.env.MAIL_FROM,
-    to: user.email,
-    subject: 'Acceso a Holiday Tracker',
-    text: `Hola ${user.nombre} ${user.apellidos},\n\nUsa este enlace para iniciar sesión. El código es de un solo uso:\n${loginUrl}\n\nSi no esperabas este correo, puedes ignorarlo.`,
-  });
+  const baseUrl = (process.env.APP_URL || 'http://localhost:4200').replace(/\/+$/, '');
+  const loginUrl = `${baseUrl}/invitacion/${code}`;
+  console.log('Login invitation URL:', loginUrl);
+  // if (process.env.MAIL_HOST && process.env.MAIL_FROM) {
+  //   await getTransporter().sendMail({
+  //     from: process.env.MAIL_FROM,
+  //     to: user.email,
+  //     subject: 'Acceso a Holiday Tracker',
+  //     text: `Hola ${user.nombre} ${user.apellidos},\n\nUsa este enlace para iniciar sesión. El código es de un solo uso:\n${loginUrl}\n\nSi no esperabas este correo, puedes ignorarlo.`,
+  //   });
+  // }
 }
 
 export async function sendRecoveryEmail(user, recoveryCode) {
