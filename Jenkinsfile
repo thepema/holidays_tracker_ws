@@ -66,18 +66,22 @@ pipeline {
       steps {
         sh '''#!/bin/sh
           set -eu
+
           docker rm -f "$APP_NAME" || true
 
           docker run -d \\
             --name "$APP_NAME" \\
             --restart unless-stopped \\
             --network proxy \\
+            --env-file /opt/.env \\
             -e VIRTUAL_HOST="$APP_DOMAIN" \\
             -e VIRTUAL_PORT="$APP_PORT" \\
             -e LETSENCRYPT_HOST="$APP_DOMAIN" \\
             -e LETSENCRYPT_EMAIL="$LETSENCRYPT_EMAIL" \\
             -e PORT="$APP_PORT" \\
             "$IMAGE_NAME"
+
+          docker network connect backend-network "$APP_NAME"
         '''
       }
     }

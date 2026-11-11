@@ -3,14 +3,20 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "API de ejemplo Hola Mundo con Fastify y Node.js",
+  "description": "API de vacaciones con Fastify y PostgreSQL",
   "scripts": {
     "start": "node src/server.js",
-    "dev": "node --watch src/server.js"
+    "dev": "ENV_FILE=.env && node --watch src/server.js"
   },
   "dependencies": {
+    "@fastify/cookie": "^11.0.2",
     "@fastify/cors": "^10.0.2",
-    "fastify": "^5.0.0"
+    "@fastify/swagger": "^9.5.1",
+    "@fastify/swagger-ui": "^5.2.3",
+    "dotenv": "^16.4.7",
+    "fastify": "^5.0.0",
+    "nodemailer": "^6.10.1",
+    "pg": "^8.13.1"
   },
   "engines": {
     "node": ">=20"
