@@ -57,14 +57,28 @@ function getTodayDateKey() {
   return `${y}-${m}-${d}`;
 }
 
-export async function listVacations(userIds = null) {
+export async function listVacations(userIds = null, { anio = null, mes = null } = {}) {
   const filter = Array.isArray(userIds) && userIds.length > 0 ? userIds : null;
+  const yearFilter = Number.isInteger(Number(anio)) && Number(anio) > 1900 ? Number(anio) : null;
+  const monthFilter =
+    Number.isInteger(Number(mes)) && Number(mes) >= 1 && Number(mes) <= 12 ? Number(mes) : null;
+
   const { rows } = await pool.query(
-    `SELECT id, usuario_id AS "usuarioId", anio, fecha
-     FROM vacaciones
-     WHERE $1::bigint[] IS NULL OR usuario_id = ANY($1::bigint[])
-     ORDER BY fecha ASC, id ASC`,
-    [filter],
+    `SELECT v.id,
+            v.usuario_id AS "usuarioId",
+            v.anio,
+            TO_CHAR(v.fecha, 'YYYY-MM-DD') AS fecha,
+            u.nombre,
+            u.apellidos,
+            u.email,
+            u.cargo
+     FROM vacaciones v
+     LEFT JOIN usuarios u ON u.id = v.usuario_id
+     WHERE ($1::bigint[] IS NULL OR v.usuario_id = ANY($1::bigint[]))
+       AND ($2::int IS NULL OR EXTRACT(YEAR FROM v.fecha) = $2::int)
+       AND ($3::int IS NULL OR EXTRACT(MONTH FROM v.fecha) = $3::int)
+     ORDER BY v.fecha ASC, u.nombre ASC, u.apellidos ASC, v.id ASC`,
+    [filter, yearFilter, monthFilter],
   );
   return rows;
 }

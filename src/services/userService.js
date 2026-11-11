@@ -111,7 +111,7 @@ export async function listUsersWithPendingInvitation() {
             s.estado AS estado_sesion
      FROM usuarios u
      INNER JOIN sesiones s ON s.usuario_id = u.id
-     WHERE s.estado != 'autorizado'
+     WHERE s.estado = 'proceso'
        AND LOWER(TRIM(u.cargo)) NOT IN ('administrador', 'administradora', 'admin')
      ORDER BY u.id ASC`,
   );

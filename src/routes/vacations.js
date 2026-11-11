@@ -20,6 +20,8 @@ export default async function vacationRoutes(app) {
         type: 'object',
         properties: {
           usuarios: { type: 'array', items: { type: 'integer', minimum: 1 }, description: 'IDs de usuario. Para administradores, lista vacía o ausente significa todos.' },
+          anio: { type: 'integer', minimum: 1900, maximum: 2200, description: 'Año opcional para filtrar las vacaciones (YYYY).' },
+          mes: { type: 'integer', minimum: 1, maximum: 12, description: 'Mes opcional para filtrar las vacaciones (1-12).' },
         },
       },
     },
@@ -27,7 +29,8 @@ export default async function vacationRoutes(app) {
     const userIds = request.isAdmin
       ? (request.query.usuarios || [])
       : [request.user.id];
-    return { vacaciones: await listVacations(userIds) };
+    const { anio, mes } = request.query || {};
+    return { vacaciones: await listVacations(userIds, { anio, mes }) };
   });
 
   app.post('/vacaciones', {
