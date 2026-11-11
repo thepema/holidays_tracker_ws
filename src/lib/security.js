@@ -20,7 +20,12 @@ export function setSessionCookie(reply, token) {
 }
 
 export function clearSessionCookie(reply) {
-  reply.clearCookie(SESSION_COOKIE_NAME, { path: '/' });
+  reply.clearCookie(SESSION_COOKIE_NAME, {
+    path: '/',
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+  });
 }
 
 function safeStringEqual(actual, expected) {
@@ -95,7 +100,12 @@ export async function requireAdminOrSession(request, reply) {
 }
 
 export async function requireSession(request, reply) {
-  if (!request.user) return reply.code(401).send({ error: 'Inicia sesión para continuar.' });
+  if (!request.user) {
+    if (request.cookies?.[SESSION_COOKIE_NAME]) {
+      clearSessionCookie(reply);
+    }
+    return reply.code(401).send({ error: 'Inicia sesión para continuar.' });
+  }
 }
 
 export function verifyAdminPassword(password) {
