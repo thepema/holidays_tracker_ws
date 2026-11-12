@@ -5,10 +5,15 @@ Los endpoints administrativos requieren `Authorization: Bearer <token>` obtenido
 ## Endpoints
 
 - `POST /api/admin/login`: intercambia `ADMIN_PASSWORD` por un token Bearer válido durante 8 horas.
-- `GET /api/usuarios` (administrador): obtiene todos los usuarios excluyendo los que tienen cargo de administrador (`Administrador`, `Administradora`, `admin`).
+- `GET /api/usuarios` (administrador): obtiene todos los usuarios excluyendo los que tienen cargo de administrador (`Administrador`, `Administradora`, `admin`), incluyendo sus `equipos` y `equipoIds`.
 - `GET /api/usuarios/pendientes` (administrador): obtiene todos los datos de los usuarios a los que se les ha enviado la invitación (`estado = 'proceso'`) y aún no han completado la autenticación.
-- `POST /api/usuarios` (administrador): `{ "nombre", "apellidos", "cargo", "email", "tipo_vacaciones" }`
-- `PATCH /api/usuarios/:usuarioId` (administrador): actualiza parcialmente un usuario existente (`{ nombre?, apellidos?, cargo?, email?, tipo_vacaciones? }`).
+- `POST /api/usuarios` (administrador): `{ "nombre", "apellidos", "cargo", "email", "tipo_vacaciones", "equipoIds"?: number[] }`
+- `PATCH /api/usuarios/:usuarioId` (administrador): actualiza parcialmente un usuario existente y/o sus equipos (`{ nombre?, apellidos?, cargo?, email?, tipo_vacaciones?, equipoIds?: number[] }`).
+- `PUT /api/usuarios/:usuarioId/equipos` (administrador): reemplaza los equipos asignados a un usuario (`{ equipoIds: number[] }`).
+- `GET /api/equipos` (administrador): obtiene todos los equipos junto con los IDs de sus miembros (`usuarioIds`).
+- `POST /api/equipos` (administrador): crea un nuevo equipo (`{ nombre: string, usuarioIds?: number[] }`).
+- `PATCH /api/equipos/:equipoId` (administrador): renombra un equipo y/o actualiza sus miembros (`{ nombre?: string, usuarioIds?: number[] }`).
+- `DELETE /api/equipos/:equipoId` (administrador): elimina un equipo y sus relaciones en `usuarios_equipos`.
 - `POST /api/sesiones/invitaciones` (administrador): envía invitaciones masivas a usuarios sin sesión activa que no tengan ya una invitación en proceso.
 - `POST /api/usuarios/:usuarioId/invitacion` (administrador): envía una invitación individual a `${APP_URL}/invitacion/<request_token>` (si el usuario ya está en estado `proceso`, no se vuelve a enviar y responde 409).
 - `GET /api/sesiones/me`: verifica la sesión activa del usuario mediante la cookie `ht_session` (o cabecera `X-Session-Token`) y devuelve `{ autenticado: true, usuario }`.
@@ -16,7 +21,7 @@ Los endpoints administrativos requieren `Authorization: Bearer <token>` obtenido
 - `POST /api/sesiones/recuperar`: `{ "codigoRecuperacion": "..." }` (y opcionalmente `email`); verifica el token de recuperación y devuelve la cookie `ht_session` junto con el `usuario` y el `token`.
 - `POST /api/sesiones/solicitar`: permite solicitar sesión desde la pantalla landing enviando `{ "nombre": "...", "email": "..." }` (cruza los datos con la BD y registra la sesión como `solicitado`), o por parte del administrador indicando `{ "usuarioId": 1 }`.
 - `POST /api/sesiones/cerrar` (administrador): revoca la sesión y el código de recuperación del usuario indicado por `{ "usuarioId": 1 }`. Para volver a acceder se debe solicitar o enviar una nueva invitación.
-- `GET /api/vacaciones` (usuario o administrador): el usuario consulta solo sus vacaciones. El administrador puede filtrar con `?usuarios=1&usuarios=2`; sin IDs devuelve todas.
+- `GET /api/vacaciones` (usuario o administrador): el usuario consulta solo sus vacaciones. El administrador puede filtrar con `?usuarios=1&usuarios=2`, `?equipoId=1`, `?mes=10`, `?anio=2026`; sin IDs devuelve todas.
 - `POST /api/vacaciones`: `{ "fechas": ["2026-08-15", "2026-08-16"] }`; un usuario registra fechas para sí mismo; el administrador también debe enviar `usuarioId`. Las fechas duplicadas existentes se ignoran.
 - `PATCH /api/vacaciones/:vacacionId`: `{ "fecha": "2026-11-25" }`; modifica la fecha de un día de vacaciones pedido siempre que la fecha original y la nueva fecha aún no hayan pasado y no esté duplicada.
 - `DELETE /api/vacaciones/:vacacionId`: cancela/elimina un día de vacaciones pedido cuya fecha aún no haya pasado.

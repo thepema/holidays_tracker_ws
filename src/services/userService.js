@@ -1,22 +1,89 @@
 import pool from '../db.js';
+import { setUserTeams } from './teamService.js';
 
 const USER_FIELDS = 'id, nombre, apellidos, cargo, email, tipo_vacaciones, created_at, updated_at';
 
-export async function createUser(input) {
-  const { rows } = await pool.query(
-    `INSERT INTO usuarios (nombre, apellidos, cargo, email, tipo_vacaciones)
-     VALUES ($1, $2, $3, $4, $5) RETURNING ${USER_FIELDS}`,
-    [input.nombre.trim(), input.apellidos.trim(), input.cargo.trim(), input.email.trim().toLowerCase(), input.tipo_vacaciones.trim()],
-  );
-  return rows[0];
+const USER_TEAMS_SUBQUERY = `COALESCE(
+  (
+    SELECT json_agg(
+      json_build_object('id', e.id, 'nombre', e.nombre)
+      ORDER BY LOWER(TRIM(e.nombre)) ASC, e.id ASC
+    )
+    FROM usuarios_equipos ue
+    INNER JOIN equipos e ON e.id = ue.equipo_id
+    WHERE ue.usuario_id = u.id
+  ),
+  '[]'::json
+) AS equipos`;
+
+function mapUserWithTeams(row) {
+  if (!row) return null;
+  const rawEquipos = Array.isArray(row.equipos) ? row.equipos : [];
+  const equipos = rawEquipos
+    .map((item) => ({
+      id: Number(item?.id),
+      nombre: String(item?.nombre || '').trim(),
+    }))
+    .filter((item) => Number.isInteger(item.id) && item.id > 0 && item.nombre);
+
+  return {
+    ...row,
+    id: Number(row.id),
+    equipos,
+    equipoIds: equipos.map((e) => e.id),
+  };
 }
 
-export async function findUserById(id) {
-  const { rows } = await pool.query(
-    `SELECT ${USER_FIELDS} FROM usuarios WHERE id = $1`,
+function extractRawTeamIds(input) {
+  if (!input || typeof input !== 'object') return undefined;
+  if (Array.isArray(input.equipoIds)) return input.equipoIds;
+  if (Array.isArray(input.equipo_ids)) return input.equipo_ids;
+  if (Array.isArray(input.equipos)) return input.equipos;
+  return undefined;
+}
+
+export async function createUser(input) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query(
+      `INSERT INTO usuarios (nombre, apellidos, cargo, email, tipo_vacaciones)
+       VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+      [
+        input.nombre.trim(),
+        input.apellidos.trim(),
+        input.cargo.trim(),
+        input.email.trim().toLowerCase(),
+        input.tipo_vacaciones.trim(),
+      ],
+    );
+    const createdId = rows[0].id;
+
+    const rawTeamIds = extractRawTeamIds(input);
+    if (rawTeamIds !== undefined) {
+      await setUserTeams(createdId, rawTeamIds, client);
+    }
+
+    const user = await findUserById(createdId, client);
+    await client.query('COMMIT');
+    return user;
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function findUserById(id, client = pool) {
+  const { rows } = await client.query(
+    `SELECT u.id, u.nombre, u.apellidos, u.cargo, u.email, u.tipo_vacaciones, u.created_at, u.updated_at,
+            ${USER_TEAMS_SUBQUERY}
+     FROM usuarios u
+     WHERE u.id = $1`,
     [id],
   );
-  return rows[0] || null;
+  return mapUserWithTeams(rows[0]);
 }
 
 export async function findUserByEmail(email) {
@@ -75,47 +142,67 @@ export async function updateUser(id, updates) {
     values.push(updates.tipo_vacaciones.trim());
   }
 
-  if (fields.length === 0) {
+  const rawTeamIds = extractRawTeamIds(updates);
+
+  if (fields.length === 0 && rawTeamIds === undefined) {
     return findUserById(id);
   }
 
-  fields.push(`updated_at = NOW()`);
-  values.push(id);
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
 
-  const { rows } = await pool.query(
-    `UPDATE usuarios
-     SET ${fields.join(', ')}
-     WHERE id = $${index}
-     RETURNING ${USER_FIELDS}`,
-    values,
-  );
+    if (fields.length > 0) {
+      fields.push(`updated_at = NOW()`);
+      values.push(id);
+      await client.query(
+        `UPDATE usuarios
+         SET ${fields.join(', ')}
+         WHERE id = $${index}`,
+        values,
+      );
+    }
 
-  return rows[0] || null;
+    if (rawTeamIds !== undefined) {
+      await setUserTeams(id, rawTeamIds, client);
+    }
+
+    const updated = await findUserById(id, client);
+    await client.query('COMMIT');
+    return updated;
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export async function listNonAdminUsers() {
   const { rows } = await pool.query(
     `SELECT u.id, u.nombre, u.apellidos, u.cargo, u.email, u.tipo_vacaciones, u.created_at, u.updated_at,
-            s.estado AS estado_sesion
+            s.estado AS estado_sesion,
+            ${USER_TEAMS_SUBQUERY}
      FROM usuarios u
      LEFT JOIN sesiones s ON s.usuario_id = u.id
      WHERE LOWER(TRIM(u.cargo)) NOT IN ('administrador', 'administradora', 'admin')
      ORDER BY u.id ASC`,
   );
-  return rows;
+  return rows.map(mapUserWithTeams);
 }
 
 export async function listUsersWithPendingInvitation() {
   const { rows } = await pool.query(
     `SELECT u.id, u.nombre, u.apellidos, u.cargo, u.email, u.tipo_vacaciones, u.created_at, u.updated_at,
-            s.estado AS estado_sesion
+            s.estado AS estado_sesion,
+            ${USER_TEAMS_SUBQUERY}
      FROM usuarios u
      INNER JOIN sesiones s ON s.usuario_id = u.id
      WHERE s.estado = 'proceso'
        AND LOWER(TRIM(u.cargo)) NOT IN ('administrador', 'administradora', 'admin')
      ORDER BY u.id ASC`,
   );
-  return rows;
+  return rows.map(mapUserWithTeams);
 }
 
 export async function listUsersWithoutActiveSession() {

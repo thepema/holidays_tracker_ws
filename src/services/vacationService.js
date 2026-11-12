@@ -57,11 +57,16 @@ function getTodayDateKey() {
   return `${y}-${m}-${d}`;
 }
 
-export async function listVacations(userIds = null, { anio = null, mes = null } = {}) {
+export async function listVacations(
+  userIds = null,
+  { anio = null, mes = null, equipoId = null } = {},
+) {
   const filter = Array.isArray(userIds) && userIds.length > 0 ? userIds : null;
   const yearFilter = Number.isInteger(Number(anio)) && Number(anio) > 1900 ? Number(anio) : null;
   const monthFilter =
     Number.isInteger(Number(mes)) && Number(mes) >= 1 && Number(mes) <= 12 ? Number(mes) : null;
+  const teamFilter =
+    Number.isInteger(Number(equipoId)) && Number(equipoId) >= 1 ? Number(equipoId) : null;
 
   const { rows } = await pool.query(
     `SELECT v.id,
@@ -77,8 +82,17 @@ export async function listVacations(userIds = null, { anio = null, mes = null } 
      WHERE ($1::bigint[] IS NULL OR v.usuario_id = ANY($1::bigint[]))
        AND ($2::int IS NULL OR EXTRACT(YEAR FROM v.fecha) = $2::int)
        AND ($3::int IS NULL OR EXTRACT(MONTH FROM v.fecha) = $3::int)
+       AND (
+         $4::bigint IS NULL
+         OR EXISTS (
+           SELECT 1
+           FROM usuarios_equipos ue
+           WHERE ue.usuario_id = v.usuario_id
+             AND ue.equipo_id = $4::bigint
+         )
+       )
      ORDER BY v.fecha ASC, u.nombre ASC, u.apellidos ASC, v.id ASC`,
-    [filter, yearFilter, monthFilter],
+    [filter, yearFilter, monthFilter, teamFilter],
   );
   return rows;
 }
