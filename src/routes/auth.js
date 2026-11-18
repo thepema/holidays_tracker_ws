@@ -1,15 +1,21 @@
-import { clearSessionCookie, requireAdmin, requireSession, setSessionCookie } from '../lib/security.js';
+import {
+  clearSessionCookie,
+  isValidAdminToken,
+  requireAdmin,
+  requireSession,
+  setSessionCookie,
+} from '../lib/security.js';
 import {
   activateSession,
+  confirmSessionResetWithCode,
+  initiateSessionResetVerification,
   markSessionAsRequested,
   recoverSession,
-  requestNewSession,
   revokeSession,
 } from '../services/sessionService.js';
 import {
   findUserByEmail,
   findUserById,
-  findUserByNameAndEmail,
 } from '../services/userService.js';
 
 const sessionSecurity = [{ SessionCookie: [] }, { AdminBearerAuth: [] }];
@@ -70,11 +76,14 @@ export default async function authRoutes(app) {
             type: 'object',
             properties: {
               id: { type: 'integer' },
+              codigo: { type: 'string' },
               nombre: { type: 'string' },
               apellidos: { type: 'string' },
               email: { type: 'string' },
               cargo: { type: 'string' },
               tipo_vacaciones: { type: 'string' },
+              oficinaId: { type: ['integer', 'null'] },
+              oficinaNombre: { type: ['string', 'null'] },
             },
           },
           token: { type: 'string' },
@@ -109,11 +118,14 @@ export default async function authRoutes(app) {
               type: 'object',
               properties: {
                 id: { type: 'integer' },
+                codigo: { type: 'string' },
                 nombre: { type: 'string' },
                 apellidos: { type: 'string' },
                 email: { type: 'string' },
                 cargo: { type: 'string' },
                 tipo_vacaciones: { type: 'string' },
+                oficinaId: { type: ['integer', 'null'] },
+                oficinaNombre: { type: ['string', 'null'] },
               },
             },
             token: { type: 'string' },
@@ -150,59 +162,91 @@ export default async function authRoutes(app) {
     }
   });
 
+  const handleConfirmResetCode = async (reply, matchedUser, verificationCode) => {
+    const result = await confirmSessionResetWithCode(matchedUser, verificationCode);
+    if (result.invalidFormat) {
+      return reply.code(400).send({
+        error: 'El código de verificación debe tener 6 dígitos numéricos.',
+      });
+    }
+    if (result.expiredOrMissing) {
+      return reply.code(400).send({
+        error: 'No hay ningún código pendiente o el código ha caducado. Solicita uno nuevo.',
+      });
+    }
+    if (result.tooManyAttempts) {
+      return reply.code(429).send({
+        error: 'Has superado el máximo de intentos. Solicita un nuevo código de verificación.',
+      });
+    }
+    if (result.invalidCode) {
+      return reply.code(401).send({
+        error: `El código numérico no es correcto. Te quedan ${result.remainingAttempts} intentos.`,
+      });
+    }
+    return reply.code(202).send({
+      solicitado: true,
+      mensaje: 'Código verificado. Solicitud de sesión registrada correctamente.',
+    });
+  };
+
   app.post('/sesiones/solicitar', {
     schema: {
       tags: ['Sesiones'],
-      summary: 'Solicitar una nueva sesión al administrador',
-      description: 'Cruza nombre y correo con la base de datos y registra la sesión como solicitado, o permite al administrador/usuario solicitarla.',
+      summary: 'Solicitar una nueva sesión mediante verificación numérica por correo',
+      description: 'Busca al usuario por correo electrónico y envía un código numérico de 6 dígitos al correo del usuario. Si se adjunta codigoVerificacion, valida el código y registra el reseteo/solicitud de sesión.',
       security: sessionSecurity,
       body: {
         type: 'object',
         properties: {
           usuarioId: { type: 'integer', minimum: 1 },
-          nombre: { type: 'string' },
           email: { type: 'string' },
           identificador: { type: 'string' },
           codigo: { type: 'string' },
+          codigoVerificacion: { type: 'string' },
         },
       },
     },
   }, async (request, reply) => {
     try {
       const body = request.body || {};
-      const nombre = typeof body.nombre === 'string' ? body.nombre.trim() : '';
       const email = typeof body.email === 'string' ? body.email.trim() : '';
+      const verificationCode =
+        typeof body.codigoVerificacion === 'string'
+          ? body.codigoVerificacion.trim()
+          : typeof body.codigo === 'string'
+            ? body.codigo.trim()
+            : '';
 
-      if (nombre && email) {
-        const matchedUser = await findUserByNameAndEmail(nombre, email);
+      if (email) {
+        const matchedUser = await findUserByEmail(email);
         if (!matchedUser) {
           return reply.code(404).send({
-            error: 'No se ha encontrado ningún usuario con ese nombre y correo electrónico.',
+            error: 'No se ha encontrado ningún usuario con ese correo electrónico.',
           });
         }
-        await markSessionAsRequested(matchedUser);
-        return reply.code(202).send({
-          solicitado: true,
-          mensaje: 'Solicitud de sesión registrada correctamente.',
+        if (verificationCode) {
+          return handleConfirmResetCode(reply, matchedUser, verificationCode);
+        }
+        await initiateSessionResetVerification(matchedUser);
+        return reply.code(200).send({
+          requiereVerificacion: true,
+          solicitado: false,
+          mensaje:
+            'Hemos enviado un código numérico de 6 dígitos a tu correo electrónico. Introdúcelo para confirmar el reseteo y solicitud de sesión.',
         });
       }
 
       if (Number.isInteger(body.usuarioId) && body.usuarioId >= 1) {
+        const bearerToken = request.headers.authorization?.replace(/^Bearer\s+/i, '') || '';
+        if (!isValidAdminToken(bearerToken)) {
+          return reply.code(401).send({
+            error: 'No autorizado para solicitar una sesión por usuarioId.',
+          });
+        }
         const userById = await findUserById(body.usuarioId);
         if (!userById) return reply.code(404).send({ error: 'Usuario no encontrado.' });
         await markSessionAsRequested(userById);
-        return reply.code(202).send({
-          solicitado: true,
-          mensaje: 'Solicitud enviada al administrador.',
-        });
-      }
-
-      if (email) {
-        const userByEmail = await findUserByEmail(email);
-        if (!userByEmail) {
-          return reply.code(404).send({ error: 'No se ha encontrado ningún usuario con ese correo.' });
-        }
-        await markSessionAsRequested(userByEmail);
         return reply.code(202).send({
           solicitado: true,
           mensaje: 'Solicitud enviada al administrador.',
@@ -219,11 +263,57 @@ export default async function authRoutes(app) {
       }
 
       return reply.code(400).send({
-        error: 'Debes indicar tu nombre y correo electrónico para solicitar la sesión.',
+        error: 'Debes indicar tu correo electrónico para recibir el código de verificación.',
       });
     } catch (error) {
       request.log.error({ err: error }, 'No se pudo enviar la solicitud de sesión');
-      return reply.code(503).send({ error: 'No se pudo registrar la solicitud de sesión.' });
+      return reply.code(503).send({ error: 'No se pudo procesar la verificación de solicitud de sesión.' });
+    }
+  });
+
+  app.post('/sesiones/solicitar/confirmar', {
+    schema: {
+      tags: ['Sesiones'],
+      summary: 'Confirmar código numérico de verificación y registrar solicitud de sesión',
+      description: 'Valida el código numérico de 6 dígitos enviado por correo al usuario antes de resetear y marcar la sesión como solicitado.',
+      body: {
+        type: 'object',
+        required: ['email'],
+        properties: {
+          email: { type: 'string', minLength: 1 },
+          codigoVerificacion: { type: 'string' },
+          codigo: { type: 'string' },
+        },
+      },
+    },
+  }, async (request, reply) => {
+    try {
+      const body = request.body || {};
+      const email = typeof body.email === 'string' ? body.email.trim() : '';
+      const verificationCode =
+        typeof body.codigoVerificacion === 'string'
+          ? body.codigoVerificacion.trim()
+          : typeof body.codigo === 'string'
+            ? body.codigo.trim()
+            : '';
+
+      if (!email) {
+        return reply.code(400).send({
+          error: 'Debes indicar tu correo electrónico.',
+        });
+      }
+
+      const matchedUser = await findUserByEmail(email);
+      if (!matchedUser) {
+        return reply.code(404).send({
+          error: 'No se ha encontrado ningún usuario con ese correo electrónico.',
+        });
+      }
+
+      return handleConfirmResetCode(reply, matchedUser, verificationCode);
+    } catch (error) {
+      request.log.error({ err: error }, 'No se pudo confirmar la solicitud de sesión');
+      return reply.code(503).send({ error: 'No se pudo confirmar la solicitud de sesión.' });
     }
   });
 

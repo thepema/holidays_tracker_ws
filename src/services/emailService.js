@@ -34,13 +34,16 @@ export async function sendLoginEmail(user, code) {
   // }
 }
 
-export async function sendRecoveryEmail(user, recoveryCode) {
-  await getTransporter().sendMail({
-    from: process.env.MAIL_FROM,
-    to: user.email,
-    subject: 'Código de recuperación de Holiday Tracker',
-    text: `Hola ${user.nombre} ${user.apellidos},\n\nTu nuevo código de recuperación es:\n${recoveryCode}\n\nGuárdalo en un lugar seguro. Solo se puede usar una vez. Si no solicitaste esta recuperación, contacta con el administrador.`,
-  });
+export async function sendSessionResetVerificationEmail(user, numericCode) {
+  console.log(`Código numérico de verificación para ${user.email}: ${numericCode}`);
+  // if (process.env.MAIL_HOST && process.env.MAIL_FROM) {
+  //   await getTransporter().sendMail({
+  //     from: process.env.MAIL_FROM,
+  //     to: user.email,
+  //     subject: 'Código de verificación para reseteo de sesión - Holiday Tracker',
+  //     text: `Hola ${user.nombre} ${user.apellidos},\n\nHemos recibido una solicitud para resetear y volver a solicitar tu sesión en Holiday Tracker.\n\nIntroduce este código numérico de 6 dígitos para confirmar la solicitud (caduca en 10 minutos):\n${numericCode}\n\nSi no has solicitado este cambio, ignora este correo: tu sesión actual no se modificará hasta que se introduzca este código.`,
+  //   });
+  // }
 }
 
 export async function notifyAdminSessionRequest(user) {

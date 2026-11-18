@@ -14,6 +14,16 @@ import {
   setUserTeams,
   updateTeam,
 } from '../services/teamService.js';
+import {
+  addOfficeHoliday,
+  createOffice,
+  createOfficeCalendar,
+  deleteOffice,
+  deleteOfficeCalendar,
+  deleteOfficeHoliday,
+  listOffices,
+  updateOffice,
+} from '../services/officeService.js';
 import { inviteUsersWithoutActiveSession, issueInvitation } from '../services/sessionService.js';
 
 const adminSecurity = [{ AdminBearerAuth: [] }];
@@ -98,13 +108,16 @@ export default async function adminRoutes(app) {
       security: adminSecurity,
       body: {
         type: 'object',
-        required: ['nombre', 'apellidos', 'cargo', 'email', 'tipo_vacaciones'],
+        required: ['codigo', 'nombre', 'apellidos', 'cargo', 'email', 'tipo_vacaciones'],
         properties: {
+          codigo: { type: 'string' },
           nombre: { type: 'string' },
           apellidos: { type: 'string' },
           cargo: { type: 'string' },
           email: { type: 'string', format: 'email' },
           tipo_vacaciones: { type: 'string' },
+          oficinaId: { type: ['integer', 'null'], minimum: 1 },
+          oficina_id: { type: ['integer', 'null'], minimum: 1 },
           equipoIds: { type: 'array', items: { type: 'integer', minimum: 1 } },
           equipo_ids: { type: 'array', items: { type: 'integer', minimum: 1 } },
           equipos: { type: 'array', items: { type: 'integer', minimum: 1 } },
@@ -113,7 +126,7 @@ export default async function adminRoutes(app) {
     },
   }, async (request, reply) => {
     const input = request.body || {};
-    const required = ['nombre', 'apellidos', 'cargo', 'email', 'tipo_vacaciones'];
+    const required = ['codigo', 'nombre', 'apellidos', 'cargo', 'email', 'tipo_vacaciones'];
     if (required.some((key) => typeof input[key] !== 'string' || !input[key].trim())) {
       return reply.code(400).send({ error: `Se requieren estos campos: ${required.join(', ')}.` });
     }
@@ -124,7 +137,13 @@ export default async function adminRoutes(app) {
       const user = await createUser(input);
       return reply.code(201).send({ usuario: user });
     } catch (error) {
-      if (error.code === '23505') return reply.code(409).send({ error: 'Ya existe un usuario con ese email.' });
+      if (error.code === '23505') {
+        const isCodeConflict = String(error.constraint || error.detail || '').toLowerCase().includes('codigo');
+        return reply.code(409).send({
+          error: isCodeConflict ? 'Ya existe un usuario con ese código.' : 'Ya existe un usuario con ese email.',
+        });
+      }
+      if (error.code === '23503') return reply.code(400).send({ error: 'La oficina seleccionada no existe.' });
       if (error.code === '23514') return reply.code(400).send({ error: 'Los datos del usuario no son válidos.' });
       throw error;
     }
@@ -147,11 +166,14 @@ export default async function adminRoutes(app) {
         minProperties: 1,
         additionalProperties: false,
         properties: {
+          codigo: { type: 'string' },
           nombre: { type: 'string' },
           apellidos: { type: 'string' },
           cargo: { type: 'string' },
           email: { type: 'string', format: 'email' },
           tipo_vacaciones: { type: 'string' },
+          oficinaId: { type: ['integer', 'null'], minimum: 1 },
+          oficina_id: { type: ['integer', 'null'], minimum: 1 },
           equipoIds: { type: 'array', items: { type: 'integer', minimum: 1 } },
           equipo_ids: { type: 'array', items: { type: 'integer', minimum: 1 } },
           equipos: { type: 'array', items: { type: 'integer', minimum: 1 } },
@@ -166,7 +188,7 @@ export default async function adminRoutes(app) {
     }
 
     const updates = request.body || {};
-    const stringKeys = ['nombre', 'apellidos', 'cargo', 'email', 'tipo_vacaciones'];
+    const stringKeys = ['codigo', 'nombre', 'apellidos', 'cargo', 'email', 'tipo_vacaciones'];
     for (const key of stringKeys) {
       if (updates[key] !== undefined && (typeof updates[key] !== 'string' || !updates[key].trim())) {
         return reply.code(400).send({ error: `El campo ${key} no puede estar vacío.` });
@@ -181,7 +203,13 @@ export default async function adminRoutes(app) {
       const updatedUser = await updateUser(usuarioId, updates);
       return { usuario: updatedUser };
     } catch (error) {
-      if (error.code === '23505') return reply.code(409).send({ error: 'Ya existe un usuario con ese email.' });
+      if (error.code === '23505') {
+        const isCodeConflict = String(error.constraint || error.detail || '').toLowerCase().includes('codigo');
+        return reply.code(409).send({
+          error: isCodeConflict ? 'Ya existe un usuario con ese código.' : 'Ya existe un usuario con ese email.',
+        });
+      }
+      if (error.code === '23503') return reply.code(400).send({ error: 'La oficina seleccionada no existe.' });
       if (error.code === '23514') return reply.code(400).send({ error: 'Los datos del usuario no son válidos.' });
       throw error;
     }
@@ -329,6 +357,229 @@ export default async function adminRoutes(app) {
       return reply.code(404).send({ error: 'Equipo no encontrado.' });
     }
     return { eliminado: true, id: result.id };
+  });
+
+  app.get('/oficinas', {
+    preHandler: requireAdmin,
+    schema: {
+      tags: ['Oficinas'],
+      summary: 'Obtener todas las oficinas con sus calendarios y festivos',
+      security: adminSecurity,
+    },
+  }, async () => {
+    const oficinas = await listOffices();
+    return { oficinas };
+  });
+
+  app.post('/oficinas', {
+    preHandler: requireAdmin,
+    schema: {
+      tags: ['Oficinas'],
+      summary: 'Crear una oficina',
+      security: adminSecurity,
+      body: {
+        type: 'object',
+        required: ['nombre'],
+        properties: {
+          nombre: { type: 'string', minLength: 1, maxLength: 120 },
+          usuarioIds: { type: 'array', items: { type: 'integer', minimum: 1 } },
+        },
+      },
+    },
+  }, async (request, reply) => {
+    const { nombre, usuarioIds } = request.body || {};
+    if (typeof nombre !== 'string' || !nombre.trim()) {
+      return reply.code(400).send({ error: 'El nombre de la oficina es obligatorio.' });
+    }
+    const result = await createOffice({ nombre, usuarioIds });
+    if (result.invalid) {
+      return reply.code(400).send({ error: 'El nombre de la oficina no es válido (máximo 120 caracteres).' });
+    }
+    if (result.duplicate) {
+      return reply.code(409).send({ error: 'Ya existe una oficina con ese nombre.' });
+    }
+    return reply.code(201).send({ oficina: result.office });
+  });
+
+  app.patch('/oficinas/:oficinaId', {
+    preHandler: requireAdmin,
+    schema: {
+      tags: ['Oficinas'],
+      summary: 'Actualizar una oficina y/o sus usuarios asignados',
+      security: adminSecurity,
+      params: {
+        type: 'object',
+        required: ['oficinaId'],
+        properties: { oficinaId: { type: 'integer', minimum: 1 } },
+      },
+      body: {
+        type: 'object',
+        minProperties: 1,
+        additionalProperties: false,
+        properties: {
+          nombre: { type: 'string', minLength: 1, maxLength: 120 },
+          usuarioIds: { type: 'array', items: { type: 'integer', minimum: 1 } },
+        },
+      },
+    },
+  }, async (request, reply) => {
+    const { oficinaId } = request.params;
+    const { nombre, usuarioIds } = request.body || {};
+    if (nombre !== undefined && (typeof nombre !== 'string' || !nombre.trim())) {
+      return reply.code(400).send({ error: 'El nombre de la oficina no puede estar vacío.' });
+    }
+    const result = await updateOffice(oficinaId, { nombre, usuarioIds });
+    if (result.notFound) {
+      return reply.code(404).send({ error: 'Oficina no encontrada.' });
+    }
+    if (result.invalid) {
+      return reply.code(400).send({ error: 'El nombre de la oficina no es válido (máximo 120 caracteres).' });
+    }
+    if (result.duplicate) {
+      return reply.code(409).send({ error: 'Ya existe otra oficina con ese nombre.' });
+    }
+    return { oficina: result.office };
+  });
+
+  app.delete('/oficinas/:oficinaId', {
+    preHandler: requireAdmin,
+    schema: {
+      tags: ['Oficinas'],
+      summary: 'Eliminar una oficina',
+      security: adminSecurity,
+      params: {
+        type: 'object',
+        required: ['oficinaId'],
+        properties: { oficinaId: { type: 'integer', minimum: 1 } },
+      },
+    },
+  }, async (request, reply) => {
+    const { oficinaId } = request.params;
+    const result = await deleteOffice(oficinaId);
+    if (result.notFound) {
+      return reply.code(404).send({ error: 'Oficina no encontrada.' });
+    }
+    return { eliminado: true, id: result.id };
+  });
+
+  app.post('/oficinas/:oficinaId/calendarios', {
+    preHandler: requireAdmin,
+    schema: {
+      tags: ['Oficinas'],
+      summary: 'Crear o asegurar un calendario anual para una oficina',
+      security: adminSecurity,
+      params: {
+        type: 'object',
+        required: ['oficinaId'],
+        properties: { oficinaId: { type: 'integer', minimum: 1 } },
+      },
+      body: {
+        type: 'object',
+        required: ['anio'],
+        properties: {
+          anio: { type: 'integer', minimum: 1900, maximum: 2200 },
+        },
+      },
+    },
+  }, async (request, reply) => {
+    const { oficinaId } = request.params;
+    const { anio } = request.body || {};
+    const result = await createOfficeCalendar(oficinaId, anio);
+    if (result.invalidYear) {
+      return reply.code(400).send({ error: 'El año del calendario debe estar entre 1900 y 2200.' });
+    }
+    if (result.notFound) {
+      return reply.code(404).send({ error: 'Oficina no encontrada.' });
+    }
+    return reply.code(201).send({ oficina: result.office });
+  });
+
+  app.delete('/oficinas/:oficinaId/calendarios/:calendarioId', {
+    preHandler: requireAdmin,
+    schema: {
+      tags: ['Oficinas'],
+      summary: 'Eliminar un calendario anual y sus días festivos',
+      security: adminSecurity,
+      params: {
+        type: 'object',
+        required: ['oficinaId', 'calendarioId'],
+        properties: {
+          oficinaId: { type: 'integer', minimum: 1 },
+          calendarioId: { type: 'integer', minimum: 1 },
+        },
+      },
+    },
+  }, async (request, reply) => {
+    const { oficinaId, calendarioId } = request.params;
+    const result = await deleteOfficeCalendar(oficinaId, calendarioId);
+    if (result.notFound) {
+      return reply.code(404).send({ error: 'Calendario anual no encontrado para esta oficina.' });
+    }
+    return { eliminado: true, oficina: result.office };
+  });
+
+  app.post('/oficinas/:oficinaId/festivos', {
+    preHandler: requireAdmin,
+    schema: {
+      tags: ['Oficinas'],
+      summary: 'Añadir un día festivo a una oficina',
+      security: adminSecurity,
+      params: {
+        type: 'object',
+        required: ['oficinaId'],
+        properties: { oficinaId: { type: 'integer', minimum: 1 } },
+      },
+      body: {
+        type: 'object',
+        required: ['fecha', 'nombre'],
+        properties: {
+          fecha: { type: 'string', format: 'date' },
+          nombre: { type: 'string', minLength: 1, maxLength: 120 },
+          anio: { type: 'integer', minimum: 1900, maximum: 2200 },
+        },
+      },
+    },
+  }, async (request, reply) => {
+    const { oficinaId } = request.params;
+    const { fecha, nombre, anio } = request.body || {};
+    const result = await addOfficeHoliday(oficinaId, { fecha, nombre, anio });
+    if (result.invalid) {
+      return reply.code(400).send({ error: 'Indica una fecha válida (YYYY-MM-DD) y un nombre de festivo (máximo 120 caracteres).' });
+    }
+    if (result.invalidYearMismatch) {
+      return reply.code(400).send({ error: 'La fecha seleccionada no corresponde al año del calendario indicado.' });
+    }
+    if (result.notFound) {
+      return reply.code(404).send({ error: 'Oficina no encontrada.' });
+    }
+    if (result.duplicate) {
+      return reply.code(409).send({ error: 'Ya existe un día festivo registrado en esa fecha para esta oficina.' });
+    }
+    return reply.code(201).send({ oficina: result.office });
+  });
+
+  app.delete('/oficinas/:oficinaId/festivos/:festivoId', {
+    preHandler: requireAdmin,
+    schema: {
+      tags: ['Oficinas'],
+      summary: 'Eliminar un día festivo de una oficina',
+      security: adminSecurity,
+      params: {
+        type: 'object',
+        required: ['oficinaId', 'festivoId'],
+        properties: {
+          oficinaId: { type: 'integer', minimum: 1 },
+          festivoId: { type: 'integer', minimum: 1 },
+        },
+      },
+    },
+  }, async (request, reply) => {
+    const { oficinaId, festivoId } = request.params;
+    const result = await deleteOfficeHoliday(oficinaId, festivoId);
+    if (result.notFound) {
+      return reply.code(404).send({ error: 'Día festivo no encontrado para esta oficina.' });
+    }
+    return { eliminado: true, id: result.id, oficina: result.office };
   });
 
   app.post('/sesiones/invitaciones', {

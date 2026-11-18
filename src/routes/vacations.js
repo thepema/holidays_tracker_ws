@@ -1,4 +1,5 @@
 import { requireAdminOrSession } from '../lib/security.js';
+import { listAllHolidays, listHolidaysForUser } from '../services/officeService.js';
 import {
   createVacations,
   deleteVacation,
@@ -9,6 +10,34 @@ import {
 const vacationSecurity = [{ AdminBearerAuth: [] }, { SessionCookie: [] }];
 
 export default async function vacationRoutes(app) {
+  app.get('/festivos', {
+    preHandler: requireAdminOrSession,
+    schema: {
+      tags: ['Vacaciones'],
+      summary: 'Consultar días festivos de la oficina del usuario o de todas las oficinas (admin)',
+      security: vacationSecurity,
+      querystring: {
+        type: 'object',
+        properties: {
+          oficinaId: { type: 'integer', minimum: 1 },
+          anio: { type: 'integer', minimum: 1900, maximum: 2200 },
+        },
+      },
+    },
+  }, async (request) => {
+    if (request.isAdmin) {
+      const { oficinaId, anio } = request.query || {};
+      return {
+        festivos: await listAllHolidays({ oficinaId, anio }),
+      };
+    }
+    return {
+      oficinaId: request.user.oficinaId ?? null,
+      oficinaNombre: request.user.oficinaNombre ?? null,
+      festivos: await listHolidaysForUser(request.user.id),
+    };
+  });
+
   app.get('/vacaciones', {
     preHandler: requireAdminOrSession,
     schema: {
@@ -74,6 +103,13 @@ export default async function vacationRoutes(app) {
       if (result.invalid) {
         return reply.code(400).send({ error: 'fechas debe ser una lista de 1 a 366 fechas válidas con formato YYYY-MM-DD.' });
       }
+      if (result.holidayConflict) {
+        const lista = result.holidays.map((h) => `${h.fecha} (${h.nombre})`).join(', ');
+        return reply.code(400).send({
+          error: `No se pueden registrar vacaciones en días festivos de la oficina asignada: ${lista}.`,
+          festivos: result.holidays,
+        });
+      }
       return reply.code(201).send({ guardadas: result.inserted.length, vacaciones: result.inserted });
     } catch (error) {
       if (error.code === '23503') {
@@ -126,6 +162,11 @@ export default async function vacationRoutes(app) {
     }
     if (result.pastDate) {
       return reply.code(400).send({ error: 'No se pueden modificar días de vacaciones cuya fecha ya ha pasado.' });
+    }
+    if (result.holidayConflict) {
+      return reply.code(400).send({
+        error: `No puedes mover las vacaciones al ${fecha} porque es día festivo en tu oficina (${result.holiday.nombre}).`,
+      });
     }
     if (result.duplicate) {
       return reply.code(409).send({ error: 'Ya tienes registrado ese día de vacaciones.' });

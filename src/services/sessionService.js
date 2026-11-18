@@ -1,8 +1,17 @@
+import crypto from 'node:crypto';
 import pool from '../db.js';
 import { generateToken, hashToken } from '../lib/security.js';
-import { notifyAdminSessionRequest, sendLoginEmail } from './emailService.js';
+import {
+  notifyAdminSessionRequest,
+  sendLoginEmail,
+  sendSessionResetVerificationEmail,
+} from './emailService.js';
 
-export async function requestNewSession(user) {
+const RESET_CODE_TTL_MS = 10 * 60 * 1000;
+const MAX_RESET_CODE_ATTEMPTS = 5;
+const pendingResetCodes = new Map();
+
+export async function issueInvitation(user) {
   const { rows: currentSession } = await pool.query(
     `SELECT estado FROM sesiones WHERE usuario_id = $1`,
     [user.id],
@@ -46,10 +55,6 @@ export async function requestNewSession(user) {
   return { code, sent: true };
 }
 
-export async function issueInvitation(user) {
-  return requestNewSession(user);
-}
-
 export async function inviteUsersWithoutActiveSession(users) {
   const results = { sent: 0, failed: 0, skipped: 0 };
   for (const user of users) {
@@ -72,8 +77,11 @@ export async function activateSession(code) {
   try {
     await client.query('BEGIN');
     const found = await client.query(
-      `SELECT u.id, s.usuario_id, u.nombre, u.apellidos, u.email, u.cargo, u.tipo_vacaciones
-       FROM sesiones s JOIN usuarios u ON u.id = s.usuario_id
+      `SELECT u.id, s.usuario_id, u.codigo, u.nombre, u.apellidos, u.email, u.cargo, u.tipo_vacaciones,
+              u.oficina_id AS "oficinaId", o.nombre AS "oficinaNombre"
+       FROM sesiones s
+       JOIN usuarios u ON u.id = s.usuario_id
+       LEFT JOIN oficinas o ON o.id = u.oficina_id
        WHERE (s.request_token_hash = $1 OR s.request_token_hash = $2)
          AND s.estado = 'proceso' FOR UPDATE OF s`,
       [code, hashToken(code)],
@@ -117,13 +125,19 @@ export async function recoverSession(recoveryCode, email = '') {
   try {
     await client.query('BEGIN');
     const query = cleanEmail
-      ? `SELECT u.id, s.usuario_id, u.nombre, u.apellidos, u.email, u.cargo, u.tipo_vacaciones
-         FROM sesiones s JOIN usuarios u ON u.id = s.usuario_id
+      ? `SELECT u.id, s.usuario_id, u.codigo, u.nombre, u.apellidos, u.email, u.cargo, u.tipo_vacaciones,
+                u.oficina_id AS "oficinaId", o.nombre AS "oficinaNombre"
+         FROM sesiones s
+         JOIN usuarios u ON u.id = s.usuario_id
+         LEFT JOIN oficinas o ON o.id = u.oficina_id
          WHERE LOWER(u.email) = LOWER($3)
            AND (s.recovery_token_hash = $1 OR s.recovery_token_hash = $2)
            AND s.estado = 'autorizado' FOR UPDATE OF s`
-      : `SELECT u.id, s.usuario_id, u.nombre, u.apellidos, u.email, u.cargo, u.tipo_vacaciones
-         FROM sesiones s JOIN usuarios u ON u.id = s.usuario_id
+      : `SELECT u.id, s.usuario_id, u.codigo, u.nombre, u.apellidos, u.email, u.cargo, u.tipo_vacaciones,
+                u.oficina_id AS "oficinaId", o.nombre AS "oficinaNombre"
+         FROM sesiones s
+         JOIN usuarios u ON u.id = s.usuario_id
+         LEFT JOIN oficinas o ON o.id = u.oficina_id
          WHERE (s.recovery_token_hash = $1 OR s.recovery_token_hash = $2)
            AND s.estado = 'autorizado' FOR UPDATE OF s`;
     const params = cleanEmail
@@ -157,6 +171,58 @@ export async function recoverSession(recoveryCode, email = '') {
   }
 }
 
+export async function initiateSessionResetVerification(user) {
+  const userId = Number(user.id);
+  const numericCode = String(crypto.randomInt(100000, 1000000));
+  pendingResetCodes.set(userId, {
+    codeHash: hashToken(numericCode),
+    expiresAt: Date.now() + RESET_CODE_TTL_MS,
+    attempts: 0,
+  });
+  console.log(`Código de verificación para ${user.email}: ${numericCode}`);
+  // try {
+  //   await sendSessionResetVerificationEmail(user, numericCode);
+  // } catch (error) {
+  //   pendingResetCodes.delete(userId);
+  //   throw error;
+  // }
+
+  return {
+    verificationSent: true,
+    expiresInSeconds: Math.floor(RESET_CODE_TTL_MS / 1000),
+  };
+}
+
+export async function confirmSessionResetWithCode(user, rawCode) {
+  const userId = Number(user.id);
+  const code = String(rawCode || '').trim();
+  if (!/^\d{6}$/.test(code)) {
+    return { invalidFormat: true };
+  }
+
+  const entry = pendingResetCodes.get(userId);
+  if (!entry || Date.now() > entry.expiresAt) {
+    pendingResetCodes.delete(userId);
+    return { expiredOrMissing: true };
+  }
+
+  entry.attempts += 1;
+  if (hashToken(code) !== entry.codeHash) {
+    if (entry.attempts >= MAX_RESET_CODE_ATTEMPTS) {
+      pendingResetCodes.delete(userId);
+      return { tooManyAttempts: true };
+    }
+    return {
+      invalidCode: true,
+      remainingAttempts: MAX_RESET_CODE_ATTEMPTS - entry.attempts,
+    };
+  }
+
+  pendingResetCodes.delete(userId);
+  await markSessionAsRequested(user);
+  return { confirmed: true, solicitado: true };
+}
+
 export async function markSessionAsRequested(user) {
   await pool.query(
     `INSERT INTO sesiones (usuario_id, token_hash, request_token_hash, recovery_token_hash, estado)
@@ -186,8 +252,11 @@ export async function authenticateSession(token) {
   );
   if (!rows[0]) return null;
   const userResult = await pool.query(
-    `SELECT id, nombre, apellidos, email, cargo, tipo_vacaciones
-     FROM usuarios WHERE id = $1`,
+    `SELECT u.id, u.codigo, u.nombre, u.apellidos, u.email, u.cargo, u.tipo_vacaciones,
+            u.oficina_id AS "oficinaId", o.nombre AS "oficinaNombre"
+     FROM usuarios u
+     LEFT JOIN oficinas o ON o.id = u.oficina_id
+     WHERE u.id = $1`,
     [rows[0].usuario_id],
   );
   return userResult.rows[0] || null;

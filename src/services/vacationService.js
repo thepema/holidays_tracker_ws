@@ -1,4 +1,5 @@
 import pool from '../db.js';
+import { findUserHolidayConflicts } from './officeService.js';
 
 function parseDates(dates) {
   if (!Array.isArray(dates) || dates.length < 1 || dates.length > 366) return null;
@@ -18,6 +19,11 @@ export async function createVacations(userId, inputDates) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    const conflicts = await findUserHolidayConflicts(userId, dates, client);
+    if (conflicts.length > 0) {
+      await client.query('ROLLBACK');
+      return { invalid: false, holidayConflict: true, holidays: conflicts };
+    }
     const inserted = [];
     for (const date of dates) {
       const year = Number(date.slice(0, 4));
@@ -73,6 +79,7 @@ export async function listVacations(
             v.usuario_id AS "usuarioId",
             v.anio,
             TO_CHAR(v.fecha, 'YYYY-MM-DD') AS fecha,
+            u.codigo,
             u.nombre,
             u.apellidos,
             u.email,
@@ -127,6 +134,11 @@ export async function updateVacationDate(vacationId, userId, newDateRaw, isAdmin
   const currentFecha = normalizeSqlDate(existing.fecha);
   if (!isAdmin && currentFecha < todayKey) {
     return { pastDate: true };
+  }
+
+  const conflicts = await findUserHolidayConflicts(existing.usuarioId, [newDate]);
+  if (conflicts.length > 0) {
+    return { holidayConflict: true, holiday: conflicts[0] };
   }
 
   const newYear = Number(newDate.slice(0, 4));

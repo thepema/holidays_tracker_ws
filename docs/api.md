@@ -7,8 +7,8 @@ Los endpoints administrativos requieren `Authorization: Bearer <token>` obtenido
 - `POST /api/admin/login`: intercambia `ADMIN_PASSWORD` por un token Bearer válido durante 8 horas.
 - `GET /api/usuarios` (administrador): obtiene todos los usuarios excluyendo los que tienen cargo de administrador (`Administrador`, `Administradora`, `admin`), incluyendo sus `equipos` y `equipoIds`.
 - `GET /api/usuarios/pendientes` (administrador): obtiene todos los datos de los usuarios a los que se les ha enviado la invitación (`estado = 'proceso'`) y aún no han completado la autenticación.
-- `POST /api/usuarios` (administrador): `{ "nombre", "apellidos", "cargo", "email", "tipo_vacaciones", "equipoIds"?: number[] }`
-- `PATCH /api/usuarios/:usuarioId` (administrador): actualiza parcialmente un usuario existente y/o sus equipos (`{ nombre?, apellidos?, cargo?, email?, tipo_vacaciones?, equipoIds?: number[] }`).
+- `POST /api/usuarios` (administrador): `{ "codigo", "nombre", "apellidos", "cargo", "email", "tipo_vacaciones", "equipoIds"?: number[] }`
+- `PATCH /api/usuarios/:usuarioId` (administrador): actualiza parcialmente un usuario existente y/o sus equipos (`{ codigo?, nombre?, apellidos?, cargo?, email?, tipo_vacaciones?, equipoIds?: number[] }`).
 - `PUT /api/usuarios/:usuarioId/equipos` (administrador): reemplaza los equipos asignados a un usuario (`{ equipoIds: number[] }`).
 - `GET /api/equipos` (administrador): obtiene todos los equipos junto con los IDs de sus miembros (`usuarioIds`).
 - `POST /api/equipos` (administrador): crea un nuevo equipo (`{ nombre: string, usuarioIds?: number[] }`).
