@@ -72,6 +72,24 @@ export async function inviteUsersWithoutActiveSession(users) {
   return results;
 }
 
+function mapSessionUser(row) {
+  if (!row) return null;
+  const rawOfficeId = row.oficinaId ?? row.oficina_id;
+  const parsedOfficeId =
+    rawOfficeId !== null && rawOfficeId !== undefined && Number(rawOfficeId) > 0
+      ? Number(rawOfficeId)
+      : null;
+  const rawOfficeName = row.oficinaNombre ?? row.oficina_nombre;
+  return {
+    ...row,
+    id: Number(row.id),
+    ...(row.usuario_id !== undefined ? { usuario_id: Number(row.usuario_id) } : {}),
+    codigo: String(row.codigo ?? '').trim(),
+    oficinaId: Number.isInteger(parsedOfficeId) ? parsedOfficeId : null,
+    oficinaNombre: rawOfficeName ? String(rawOfficeName).trim() : null,
+  };
+}
+
 export async function activateSession(code) {
   const client = await pool.connect();
   try {
@@ -91,7 +109,7 @@ export async function activateSession(code) {
       return null;
     }
 
-    const user = found.rows[0];
+    const user = mapSessionUser(found.rows[0]);
     const sessionToken = generateToken();
     const recoveryCode = generateToken();
 
@@ -150,7 +168,7 @@ export async function recoverSession(recoveryCode, email = '') {
       return null;
     }
 
-    const user = found.rows[0];
+    const user = mapSessionUser(found.rows[0]);
     const token = generateToken();
     await client.query(
       `UPDATE sesiones SET
@@ -259,7 +277,7 @@ export async function authenticateSession(token) {
      WHERE u.id = $1`,
     [rows[0].usuario_id],
   );
-  return userResult.rows[0] || null;
+  return mapSessionUser(userResult.rows[0]);
 }
 
 export async function revokeSession(userId) {

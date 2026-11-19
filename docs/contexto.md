@@ -20,7 +20,7 @@ Este documento resume la arquitectura, el modelo de dominio, los flujos de auten
 - `src/lib/security.js`:
   - Generación de tokens (`32 bytes` en `base64url`) y hash `SHA-256`.
   - Firma y validación de tokens Bearer de administrador mediante `HMAC-SHA256` (`ADMIN_TOKEN_SECRET`), con validez de **8 horas**.
-  - Gestión de cookie HTTP-only `ht_session` (TTL de **8 horas**, `sameSite: 'lax'`).
+  - Gestión de cookie HTTP-only `ht_session` (`sameSite: 'none'` y `secure: true` sobre HTTPS; `sameSite: 'lax'` y `secure: false` en HTTP local).
   - Middlewares (`requireAdmin`, `requireSession`, `requireAdminOrSession`).
 - `src/routes/`:
   - `admin.js`:

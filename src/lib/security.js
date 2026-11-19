@@ -9,23 +9,40 @@ export const generateToken = () => crypto.randomBytes(32).toString('base64url');
 export const hashToken = (token) =>
   crypto.createHash('sha256').update(String(token)).digest('hex');
 
-export function setSessionCookie(reply, token) {
-  reply.setCookie(SESSION_COOKIE_NAME, token, {
+function isSecureCookieRequest(reply) {
+  const forwardedProto = String(reply.request?.headers?.['x-forwarded-proto'] || '')
+    .split(',')[0]
+    .trim()
+    .toLowerCase();
+  if (forwardedProto === 'https' || reply.request?.protocol === 'https') {
+    return true;
+  }
+  const hostname = String(reply.request?.hostname || '').toLowerCase();
+  const isLocalHost =
+    hostname === 'localhost' ||
+    hostname === '127.0.0.1' ||
+    hostname.startsWith('localhost:') ||
+    hostname.startsWith('127.0.0.1:');
+  return process.env.NODE_ENV === 'production' && !isLocalHost;
+}
+
+function getSessionCookieOptions(reply, includeMaxAge = false) {
+  const isSecure = isSecureCookieRequest(reply);
+  return {
     path: '/',
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
-    maxAge: SESSION_TTL_SECONDS,
-  });
+    secure: isSecure,
+    sameSite: isSecure ? 'none' : 'lax',
+    ...(includeMaxAge ? { maxAge: SESSION_TTL_SECONDS } : {}),
+  };
+}
+
+export function setSessionCookie(reply, token) {
+  reply.setCookie(SESSION_COOKIE_NAME, token, getSessionCookieOptions(reply, true));
 }
 
 export function clearSessionCookie(reply) {
-  reply.clearCookie(SESSION_COOKIE_NAME, {
-    path: '/',
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
-  });
+  reply.clearCookie(SESSION_COOKIE_NAME, getSessionCookieOptions(reply, false));
 }
 
 function safeStringEqual(actual, expected) {
