@@ -57,6 +57,18 @@ const confirmResetRateLimit = createRateLimitPreHandler({
   errorMessage: 'Demasiados intentos de confirmación de código.',
 });
 
+function isAdminBearerRequest(request) {
+  const bearerToken = request.headers.authorization?.replace(/^Bearer\s+/i, '') || '';
+  return isValidAdminToken(bearerToken);
+}
+
+function skipRateLimitForAdmin(rateLimitHandler) {
+  return async (request, reply) => {
+    if (isAdminBearerRequest(request)) return;
+    return rateLimitHandler(request, reply);
+  };
+}
+
 export default async function authRoutes(app) {
   app.get('/sesiones/me', {
     preHandler: requireSession,
@@ -228,7 +240,10 @@ export default async function authRoutes(app) {
   };
 
   app.post('/sesiones/solicitar', {
-    preHandler: [requestSessionMinuteLimit, requestSessionHourLimit],
+    preHandler: [
+      skipRateLimitForAdmin(requestSessionMinuteLimit),
+      skipRateLimitForAdmin(requestSessionHourLimit),
+    ],
     schema: {
       tags: ['Sesiones'],
       summary: 'Solicitar una nueva sesión mediante verificación numérica por correo',
@@ -285,7 +300,7 @@ export default async function authRoutes(app) {
         }
         const userById = await findUserById(body.usuarioId);
         if (!userById) return reply.code(404).send({ error: 'Usuario no encontrado.' });
-        await markSessionAsRequested(userById);
+        await markSessionAsRequested(userById, { initiatedByAdmin: true });
         return reply.code(202).send({
           solicitado: true,
           mensaje: 'Solicitud enviada al administrador.',

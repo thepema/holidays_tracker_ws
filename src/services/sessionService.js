@@ -12,12 +12,7 @@ const RESET_CODE_TTL_MS = 10 * 60 * 1000;
 const RESET_CODE_RESEND_COOLDOWN_MS = 60 * 1000;
 const RESET_CODE_MAX_PER_HOUR = 5;
 const MAX_RESET_CODE_ATTEMPTS = 5;
-const BULK_INVITE_DELAY_MS = 250;
 const pendingResetCodes = new Map();
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 function createRateLimitError(message, retryAfterSeconds) {
   const error = new Error(message);
@@ -72,17 +67,13 @@ export async function issueInvitation(user) {
 
 export async function inviteUsersWithoutActiveSession(users) {
   const results = { sent: 0, failed: 0, skipped: 0 };
-  for (let index = 0; index < users.length; index += 1) {
-    const user = users[index];
+  for (const user of users) {
     try {
       const res = await issueInvitation(user);
       if (res?.alreadyInProcess) {
         results.skipped += 1;
       } else {
         results.sent += 1;
-        if (index < users.length - 1) {
-          await sleep(BULK_INVITE_DELAY_MS);
-        }
       }
     } catch {
       results.failed += 1;
@@ -289,7 +280,7 @@ export async function confirmSessionResetWithCode(user, rawCode) {
   return { confirmed: true, solicitado: true };
 }
 
-export async function markSessionAsRequested(user) {
+export async function markSessionAsRequested(user, { initiatedByAdmin = false } = {}) {
   await pool.query(
     `INSERT INTO sesiones (usuario_id, token_hash, request_token_hash, recovery_token_hash, estado)
      VALUES ($1, NULL, NULL, NULL, 'solicitado')
@@ -302,7 +293,7 @@ export async function markSessionAsRequested(user) {
     [user.id],
   );
   try {
-    await notifyAdminSessionRequest(user);
+    await notifyAdminSessionRequest(user, { initiatedByAdmin });
   } catch {
     // Si el envío de correo no está configurado, se mantiene la solicitud registrada en BD.
   }

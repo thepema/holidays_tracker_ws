@@ -5,6 +5,7 @@ export const DEFAULT_SMTP_HOST = 'smtp.buzondecorreo.com';
 export const DEFAULT_SMTP_PORT = 465;
 export const DEFAULT_MAIL_USER = 'generic@maisonzaro.com';
 export const DEFAULT_MAIL_FROM = 'Holiday Tracker <generic@maisonzaro.com>';
+export const DEFAULT_APP_URL = 'https://holiday-tracker.maisonzaro.com';
 
 export const DEFAULT_IMAP_CONFIG = {
   host: process.env.IMAP_HOST || 'imap.buzondecorreo.com',
@@ -32,6 +33,12 @@ function parseBooleanFlag(rawValue, fallback) {
   return ['true', '1', 'ssl', 'tls', 'yes'].includes(String(rawValue).trim().toLowerCase());
 }
 
+export function getAppBaseUrl() {
+  const raw = String(process.env.APP_URL || DEFAULT_APP_URL).trim().replace(/\/+$/, '');
+  const candidate = raw || DEFAULT_APP_URL;
+  return /^https?:\/\//i.test(candidate) ? candidate : `https://${candidate}`;
+}
+
 export function getMailConfig() {
   const host = String(process.env.MAIL_HOST || DEFAULT_SMTP_HOST).trim();
   const port = Number(process.env.MAIL_PORT) || DEFAULT_SMTP_PORT;
@@ -40,6 +47,7 @@ export function getMailConfig() {
   const pass = String(process.env.MAIL_PASSWORD || '');
   const from = String(process.env.MAIL_FROM || DEFAULT_MAIL_FROM).trim();
   const adminEmail = String(process.env.ADMIN_EMAIL || DEFAULT_MAIL_USER).trim();
+  const appUrl = getAppBaseUrl();
 
   return {
     host,
@@ -49,6 +57,7 @@ export function getMailConfig() {
     pass,
     from,
     adminEmail,
+    appUrl,
     imap: {
       host: String(process.env.IMAP_HOST || 'imap.buzondecorreo.com').trim(),
       port: Number(process.env.IMAP_PORT) || 993,
@@ -91,9 +100,13 @@ function escapeHtml(value) {
 
 export function assertCanSendEmail(
   recipientEmail,
-  { skipRecipientCooldown = false, skipRecipientHourlyLimit = false } = {},
+  { source = 'user', skipRecipientCooldown = false, skipRecipientHourlyLimit = false } = {},
 ) {
   const normalizedRecipient = validateEmailAddress(recipientEmail);
+  if (source === 'admin' || source === 'internal') {
+    return normalizedRecipient;
+  }
+
   const cooldownMs = skipRecipientCooldown ? ADMIN_EXPLICIT_COOLDOWN_MS : RECIPIENT_COOLDOWN_MS;
 
   const recipientCooldown = checkCooldown({
@@ -179,9 +192,10 @@ export function resetEmailTransporter() {
 
 export async function sendLoginEmail(user, code) {
   const config = getMailConfig();
-  const baseUrl = (process.env.APP_URL || 'http://localhost:4200').replace(/\/+$/, '');
+  const baseUrl = getAppBaseUrl();
   const loginUrl = `${baseUrl}/invitacion/${code}`;
-  const recipient = assertCanSendEmail(user?.email, { skipRecipientCooldown: true });
+  // Vía interna / enviada por el administrador: solo valida formato/seguridad, sin restricción de limitador.
+  const recipient = validateEmailAddress(user?.email);
 
   const fullName = `${user?.nombre || ''} ${user?.apellidos || ''}`.trim() || 'usuario';
   const safeName = escapeHtml(fullName);
@@ -212,7 +226,8 @@ export async function sendLoginEmail(user, code) {
 
 export async function sendSessionResetVerificationEmail(user, numericCode) {
   const config = getMailConfig();
-  const recipient = assertCanSendEmail(user?.email);
+  // Vía solicitada por el usuario: restringida por cooldown, límite por destinatario y límite global.
+  const recipient = assertCanSendEmail(user?.email, { source: 'user' });
 
   const fullName = `${user?.nombre || ''} ${user?.apellidos || ''}`.trim() || 'usuario';
   const safeName = escapeHtml(fullName);
@@ -240,34 +255,37 @@ export async function sendSessionResetVerificationEmail(user, numericCode) {
   });
 }
 
-export async function notifyAdminSessionRequest(user) {
+export async function notifyAdminSessionRequest(user, { initiatedByAdmin = false } = {}) {
   const config = getMailConfig();
   const adminRecipient = validateEmailAddress(config.adminEmail);
-  const userKey = String(user?.id || user?.email || 'unknown').trim().toLowerCase();
 
-  const userNotifyCooldown = checkCooldown({
-    bucket: 'email:admin-notify-user',
-    key: userKey,
-  });
-  if (!userNotifyCooldown.allowed) {
-    return { skipped: true, reason: 'cooldown' };
+  if (!initiatedByAdmin) {
+    const userKey = String(user?.id || user?.email || 'unknown').trim().toLowerCase();
+
+    const userNotifyCooldown = checkCooldown({
+      bucket: 'email:admin-notify-user',
+      key: userKey,
+    });
+    if (!userNotifyCooldown.allowed) {
+      return { skipped: true, reason: 'cooldown' };
+    }
+
+    const globalLimit = checkRateLimit({
+      bucket: 'email:smtp-global',
+      key: 'global',
+      maxRequests: GLOBAL_SMTP_MAX_PER_MINUTE,
+      windowMs: GLOBAL_SMTP_WINDOW_MS,
+    });
+    if (!globalLimit.allowed) {
+      return { skipped: true, reason: 'global-rate-limit' };
+    }
+
+    markCooldown({
+      bucket: 'email:admin-notify-user',
+      key: userKey,
+      cooldownMs: ADMIN_NOTIFY_USER_COOLDOWN_MS,
+    });
   }
-
-  const globalLimit = checkRateLimit({
-    bucket: 'email:smtp-global',
-    key: 'global',
-    maxRequests: GLOBAL_SMTP_MAX_PER_MINUTE,
-    windowMs: GLOBAL_SMTP_WINDOW_MS,
-  });
-  if (!globalLimit.allowed) {
-    return { skipped: true, reason: 'global-rate-limit' };
-  }
-
-  markCooldown({
-    bucket: 'email:admin-notify-user',
-    key: userKey,
-    cooldownMs: ADMIN_NOTIFY_USER_COOLDOWN_MS,
-  });
 
   const fullName = `${user?.nombre || ''} ${user?.apellidos || ''}`.trim() || 'Usuario';
   const userEmail = String(user?.email || '').replace(/[\r\n\0]/g, '').trim();

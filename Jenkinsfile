@@ -30,12 +30,14 @@ pipeline {
               env.APP_NAME = 'holiday-tracker-api-dev'
               env.APP_DOMAIN = 'holiday-tracker-api.dev.maisonzaro.com'
               env.APP_PORT = '3001'
+              env.APP_URL = 'https://holiday-tracker.maisonzaro.com'
               env.IMAGE_NAME = "holiday-tracker-api:dev-${env.BUILD_NUMBER}"
               break
             case 'main':
               env.APP_NAME = 'holiday-tracker-api'
               env.APP_DOMAIN = 'holiday-tracker-api.maisonzaro.com'
               env.APP_PORT = '3000'
+              env.APP_URL = 'https://holiday-tracker.maisonzaro.com'
               env.IMAGE_NAME = "holiday-tracker-api:prod-${env.BUILD_NUMBER}"
               break
             default:
@@ -79,6 +81,7 @@ pipeline {
             -e LETSENCRYPT_HOST="$APP_DOMAIN" \\
             -e LETSENCRYPT_EMAIL="$LETSENCRYPT_EMAIL" \\
             -e PORT="$APP_PORT" \\
+            -e APP_URL="$APP_URL" \\
             "$IMAGE_NAME"
 
           docker network connect backend-network "$APP_NAME"

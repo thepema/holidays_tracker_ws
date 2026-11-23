@@ -32,7 +32,7 @@ Configura en el entorno de ejecución (por ejemplo, `/opt/.env`):
 
 - `ADMIN_PASSWORD`: contraseña para iniciar sesión como administrador.
 - `ADMIN_TOKEN_SECRET`: secreto aleatorio para firmar y validar tokens administrativos; no es el token Bearer y no se envía en las peticiones.
-- `APP_URL`: URL pública del frontend, por ejemplo `https://holiday-tracker.maisonzaro.com`.
+- `APP_URL`: URL pública del frontend para enlaces de invitación (por defecto `https://holiday-tracker.maisonzaro.com`).
 - `MAIL_HOST`, `MAIL_PORT`, `MAIL_SECURE`, `MAIL_USER`, `MAIL_PASSWORD`, `MAIL_FROM`: datos del servidor SMTP saliente (por defecto `smtp.buzondecorreo.com`, puerto `465`, SSL/TLS `MAIL_SECURE=true`, usuario `generic@maisonzaro.com`).
 - `IMAP_HOST`, `IMAP_PORT`, `IMAP_SECURE`: configuración del servidor de correo entrante IMAP (por defecto `imap.buzondecorreo.com`, puerto `993`, SSL/TLS `IMAP_SECURE=true`).
 - `ADMIN_EMAIL`: dirección que recibe las solicitudes de nueva sesión (por defecto `generic@maisonzaro.com`).
@@ -40,14 +40,18 @@ Configura en el entorno de ejecución (por ejemplo, `/opt/.env`):
 
 ## Seguridad Anti-Spam y Límites de Tasa (Rate Limiting)
 
-- **Rate limiting por IP**:
-  - `POST /api/sesiones/solicitar`: máximo 5 peticiones/minuto y 20 peticiones/hora por IP.
-  - `POST /api/sesiones/solicitar/confirmar`, `POST /api/sesiones/activar`, `POST /api/sesiones/activar/:codigo` y `POST /api/sesiones/recuperar`: máximo 10 intentos cada 10 minutos por IP.
-  - `POST /api/admin/login`: máximo 8 intentos cada 15 minutos por IP.
-- **Control en el servicio de correo (`emailService.js`) y verificación**:
-  - Cooldown de 60 segundos por destinatario para códigos de verificación y envíos de usuario (15 segundos para envíos administrativos explícitos).
-  - Máximo 5 correos por hora a un mismo destinatario y 30 correos por minuto de límite global en el servidor SMTP.
-  - Cooldown de 15 minutos por usuario solicitante en notificaciones al correo del administrador (`ADMIN_EMAIL`).
-  - Validación estricta de direcciones y bloqueo de inyección de cabeceras (`\r`, `\n`).
+El limitador diferencia dos vías de envío:
+
+- **Vía solicitada por el usuario (restringida)**:
+  - **Rate limiting por IP**:
+    - `POST /api/sesiones/solicitar`: máximo 5 peticiones/minuto y 20 peticiones/hora por IP (omitido si la petición incluye un token Bearer de administrador válido).
+    - `POST /api/sesiones/solicitar/confirmar`, `POST /api/sesiones/activar`, `POST /api/sesiones/activar/:codigo` y `POST /api/sesiones/recuperar`: máximo 10 intentos cada 10 minutos por IP.
+    - `POST /api/admin/login`: máximo 8 intentos cada 15 minutos por IP.
+  - **Control en `emailService.js` para solicitudes de usuarios**:
+    - En códigos de verificación (`sendSessionResetVerificationEmail`): cooldown de 60 segundos por destinatario, máximo 5 correos por hora a un mismo destinatario y límite global de 30 correos/minuto.
+    - En avisos al administrador iniciados por el usuario (`notifyAdminSessionRequest`): cooldown de 15 minutos por usuario solicitante y límite global de 30 correos/minuto.
+    - Validación estricta de direcciones y bloqueo de inyección de cabeceras (`\r`, `\n`).
+- **Vía interna / enviada por el administrador (sin restricción)**:
+  - Invitaciones individuales o masivas (`sendLoginEmail`, `POST /api/usuarios/:usuarioId/invitacion`, `POST /api/sesiones/invitaciones`) y notificaciones iniciadas por el administrador (`initiatedByAdmin: true`) únicamente validan el formato y seguridad de la dirección de correo (`validateEmailAddress`), sin límites de frecuencia ni cooldowns.
 
 La sesión de usuario caduca tras 8 horas sin actividad. Los tokens de solicitud (`request_token_hash`), de sesión (`token_hash`) y de recuperación (`recovery_token_hash`) se guardan en la base de datos exclusivamente como SHA-256 (CHAR(64)). El código de recuperación se devuelve al cliente tras activar o recuperar la sesión.
