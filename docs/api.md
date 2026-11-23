@@ -23,6 +23,7 @@ Los endpoints administrativos requieren `Authorization: Bearer <token>` obtenido
 - `POST /api/sesiones/cerrar` (administrador): revoca la sesión y el código de recuperación del usuario indicado por `{ "usuarioId": 1 }`. Para volver a acceder se debe solicitar o enviar una nueva invitación.
 - `GET /api/vacaciones` (usuario o administrador): el usuario consulta solo sus vacaciones. El administrador puede filtrar con `?usuarios=1&usuarios=2`, `?equipoId=1`, `?mes=10`, `?anio=2026`; sin IDs devuelve todas.
 - `POST /api/vacaciones`: `{ "fechas": ["2026-08-15", "2026-08-16"] }`; un usuario registra fechas para sí mismo; el administrador también debe enviar `usuarioId`. Las fechas duplicadas existentes se ignoran.
+- `POST /api/vacaciones/recordatorio` (administrador): envía un correo de recordatorio a todos los usuarios con sesión autorizada activa (`estado = 'autorizado'`) para que entren en la aplicación y registren sus vacaciones previstas en los próximos meses.
 - `PATCH /api/vacaciones/:vacacionId`: `{ "fecha": "2026-11-25" }`; modifica la fecha de un día de vacaciones pedido siempre que la fecha original y la nueva fecha aún no hayan pasado y no esté duplicada.
 - `DELETE /api/vacaciones/:vacacionId`: cancela/elimina un día de vacaciones pedido cuya fecha aún no haya pasado.
 

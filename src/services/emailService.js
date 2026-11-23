@@ -306,3 +306,38 @@ export async function notifyAdminSessionRequest(user, { initiatedByAdmin = false
 
   return { sent: true };
 }
+
+export async function sendVacationReminderEmail(user) {
+  const config = getMailConfig();
+  const baseUrl = getAppBaseUrl();
+  const appUrl = `${baseUrl}/vacaciones`;
+  // Vía interna / enviada por el administrador: solo valida formato/seguridad, sin restricción de limitador.
+  const recipient = validateEmailAddress(user?.email);
+
+  const fullName = `${user?.nombre || ''} ${user?.apellidos || ''}`.trim() || 'usuario';
+  const safeName = escapeHtml(fullName);
+  const safeUrl = escapeHtml(appUrl);
+
+  await getTransporter().sendMail({
+    from: config.from,
+    to: recipient,
+    subject: 'Recordatorio: registra tus próximas vacaciones en Holiday Tracker',
+    text:
+      `Hola ${fullName},\n\n` +
+      `Te recordamos que puedes acceder a Holiday Tracker para registrar las vacaciones que tengas previstas en los próximos meses:\n` +
+      `${appUrl}\n\n` +
+      `Mantener tu planificación actualizada ayuda a coordinar mejor el calendario del equipo.\n\n` +
+      `Un saludo,\nHoliday Tracker`,
+    html:
+      `<div style="font-family: Arial, sans-serif; color: #1f2937; line-height: 1.5; max-width: 560px;">` +
+      `<h2 style="color: #0e3345; margin-bottom: 12px;">Recordatorio de vacaciones</h2>` +
+      `<p>Hola <strong>${safeName}</strong>,</p>` +
+      `<p>Te recordamos que puedes acceder a Holiday Tracker para registrar las vacaciones que tengas previstas en los próximos meses.</p>` +
+      `<p style="margin: 20px 0;">` +
+      `<a href="${safeUrl}" style="background-color: #0e3345; color: #ffffff; padding: 12px 20px; text-decoration: none; border-radius: 6px; display: inline-block;">Registrar mis vacaciones</a>` +
+      `</p>` +
+      `<p style="font-size: 13px; color: #4b5563;">Si el botón no funciona, copia y pega esta dirección en tu navegador:<br /><a href="${safeUrl}">${safeUrl}</a></p>` +
+      `<p style="font-size: 12px; color: #6b7280; margin-top: 24px;">Mantener tu planificación actualizada ayuda a coordinar mejor el calendario del equipo.</p>` +
+      `</div>`,
+  });
+}

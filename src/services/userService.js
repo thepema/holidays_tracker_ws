@@ -236,3 +236,15 @@ export async function listUsersWithoutActiveSession() {
   );
   return rows;
 }
+
+export async function listAuthenticatedUsers() {
+  const { rows } = await pool.query(
+    `SELECT u.id, u.codigo, u.nombre, u.apellidos, u.email
+     FROM usuarios u
+     INNER JOIN sesiones s ON s.usuario_id = u.id
+     WHERE s.estado = 'autorizado'
+       AND LOWER(TRIM(u.cargo)) NOT IN ('administrador', 'administradora', 'admin')
+     ORDER BY u.id ASC`,
+  );
+  return rows;
+}

@@ -6,6 +6,7 @@ import {
   notifyAdminSessionRequest,
   sendLoginEmail,
   sendSessionResetVerificationEmail,
+  sendVacationReminderEmail,
 } from './emailService.js';
 
 const RESET_CODE_TTL_MS = 10 * 60 * 1000;
@@ -75,6 +76,19 @@ export async function inviteUsersWithoutActiveSession(users) {
       } else {
         results.sent += 1;
       }
+    } catch {
+      results.failed += 1;
+    }
+  }
+  return results;
+}
+
+export async function sendVacationReminderToAuthenticatedUsers(users) {
+  const results = { sent: 0, failed: 0 };
+  for (const user of users) {
+    try {
+      await sendVacationReminderEmail(user);
+      results.sent += 1;
     } catch {
       results.failed += 1;
     }

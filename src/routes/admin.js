@@ -3,6 +3,7 @@ import { requireAdmin, createAdminToken, verifyAdminPassword, ADMIN_TOKEN_TTL_SE
 import {
   createUser,
   findUserById,
+  listAuthenticatedUsers,
   listNonAdminUsers,
   listUsersWithPendingInvitation,
   listUsersWithoutActiveSession,
@@ -25,7 +26,11 @@ import {
   listOffices,
   updateOffice,
 } from '../services/officeService.js';
-import { inviteUsersWithoutActiveSession, issueInvitation } from '../services/sessionService.js';
+import {
+  inviteUsersWithoutActiveSession,
+  issueInvitation,
+  sendVacationReminderToAuthenticatedUsers,
+} from '../services/sessionService.js';
 
 const adminSecurity = [{ AdminBearerAuth: [] }];
 
@@ -606,6 +611,24 @@ export default async function adminRoutes(app) {
       enviadas: result.sent,
       fallidas: result.failed,
       omitidas: result.skipped || 0,
+    };
+  });
+
+  app.post('/vacaciones/recordatorio', {
+    preHandler: requireAdmin,
+    schema: {
+      tags: ['Administración'],
+      summary: 'Enviar recordatorio de registro de vacaciones a usuarios autenticados',
+      description: 'Envía un correo electrónico a todos los usuarios con sesión autorizada activa recordándoles entrar en la aplicación y registrar sus vacaciones previstas para los próximos meses.',
+      security: adminSecurity,
+    },
+  }, async () => {
+    const users = await listAuthenticatedUsers();
+    const result = await sendVacationReminderToAuthenticatedUsers(users);
+    return {
+      total: users.length,
+      enviadas: result.sent,
+      fallidas: result.failed,
     };
   });
 
