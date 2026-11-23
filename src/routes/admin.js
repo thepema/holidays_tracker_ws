@@ -1,3 +1,4 @@
+import { createRateLimitPreHandler } from '../lib/rateLimiter.js';
 import { requireAdmin, createAdminToken, verifyAdminPassword, ADMIN_TOKEN_TTL_SECONDS } from '../lib/security.js';
 import {
   createUser,
@@ -28,8 +29,16 @@ import { inviteUsersWithoutActiveSession, issueInvitation } from '../services/se
 
 const adminSecurity = [{ AdminBearerAuth: [] }];
 
+const adminLoginRateLimit = createRateLimitPreHandler({
+  bucket: 'route:admin:login',
+  maxRequests: 8,
+  windowMs: 15 * 60 * 1000,
+  errorMessage: 'Demasiados intentos de inicio de sesión de administrador.',
+});
+
 export default async function adminRoutes(app) {
   app.post('/admin/login', {
+    preHandler: adminLoginRateLimit,
     schema: {
       tags: ['Administración'],
       summary: 'Iniciar sesión como administrador',
@@ -625,7 +634,17 @@ export default async function adminRoutes(app) {
         });
       }
       return { enviada: true };
-    } catch {
+    } catch (error) {
+      if (error?.statusCode === 429) {
+        if (error.retryAfterSeconds) {
+          reply.header('Retry-After', String(error.retryAfterSeconds));
+        }
+        return reply.code(429).send({
+          error: error.message,
+          ...(error.retryAfterSeconds ? { retryAfterSeconds: error.retryAfterSeconds } : {}),
+        });
+      }
+      request.log.error({ err: error }, 'No se pudo enviar la invitación');
       return reply.code(503).send({ error: 'No se pudo enviar la invitación. Revisa la configuración de correo.' });
     }
   });

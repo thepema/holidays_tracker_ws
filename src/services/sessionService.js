@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import pool from '../db.js';
+import { checkRateLimit } from '../lib/rateLimiter.js';
 import { generateToken, hashToken } from '../lib/security.js';
 import {
   notifyAdminSessionRequest,
@@ -8,8 +9,22 @@ import {
 } from './emailService.js';
 
 const RESET_CODE_TTL_MS = 10 * 60 * 1000;
+const RESET_CODE_RESEND_COOLDOWN_MS = 60 * 1000;
+const RESET_CODE_MAX_PER_HOUR = 5;
 const MAX_RESET_CODE_ATTEMPTS = 5;
+const BULK_INVITE_DELAY_MS = 250;
 const pendingResetCodes = new Map();
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function createRateLimitError(message, retryAfterSeconds) {
+  const error = new Error(message);
+  error.statusCode = 429;
+  error.retryAfterSeconds = retryAfterSeconds;
+  return error;
+}
 
 export async function issueInvitation(user) {
   const { rows: currentSession } = await pool.query(
@@ -57,13 +72,17 @@ export async function issueInvitation(user) {
 
 export async function inviteUsersWithoutActiveSession(users) {
   const results = { sent: 0, failed: 0, skipped: 0 };
-  for (const user of users) {
+  for (let index = 0; index < users.length; index += 1) {
+    const user = users[index];
     try {
       const res = await issueInvitation(user);
       if (res?.alreadyInProcess) {
         results.skipped += 1;
       } else {
         results.sent += 1;
+        if (index < users.length - 1) {
+          await sleep(BULK_INVITE_DELAY_MS);
+        }
       }
     } catch {
       results.failed += 1;
@@ -191,23 +210,52 @@ export async function recoverSession(recoveryCode, email = '') {
 
 export async function initiateSessionResetVerification(user) {
   const userId = Number(user.id);
+  const now = Date.now();
+  const existing = pendingResetCodes.get(userId);
+
+  if (existing && existing.lastSentAt && now - existing.lastSentAt < RESET_CODE_RESEND_COOLDOWN_MS) {
+    const retryAfterSeconds = Math.max(
+      1,
+      Math.ceil((RESET_CODE_RESEND_COOLDOWN_MS - (now - existing.lastSentAt)) / 1000),
+    );
+    throw createRateLimitError(
+      `Debes esperar ${retryAfterSeconds}s antes de solicitar un nuevo código de verificación.`,
+      retryAfterSeconds,
+    );
+  }
+
+  const hourlyLimit = checkRateLimit({
+    bucket: 'session:reset-code-user',
+    key: String(userId),
+    maxRequests: RESET_CODE_MAX_PER_HOUR,
+    windowMs: 60 * 60 * 1000,
+  });
+  if (!hourlyLimit.allowed) {
+    throw createRateLimitError(
+      `Has alcanzado el máximo de solicitudes por hora. Podrás intentarlo de nuevo en ${hourlyLimit.retryAfterSeconds}s.`,
+      hourlyLimit.retryAfterSeconds,
+    );
+  }
+
   const numericCode = String(crypto.randomInt(100000, 1000000));
   pendingResetCodes.set(userId, {
     codeHash: hashToken(numericCode),
-    expiresAt: Date.now() + RESET_CODE_TTL_MS,
+    expiresAt: now + RESET_CODE_TTL_MS,
+    lastSentAt: now,
     attempts: 0,
   });
-  console.log(`Código de verificación para ${user.email}: ${numericCode}`);
-  // try {
-  //   await sendSessionResetVerificationEmail(user, numericCode);
-  // } catch (error) {
-  //   pendingResetCodes.delete(userId);
-  //   throw error;
-  // }
+
+  try {
+    await sendSessionResetVerificationEmail(user, numericCode);
+  } catch (error) {
+    pendingResetCodes.delete(userId);
+    throw error;
+  }
 
   return {
     verificationSent: true,
     expiresInSeconds: Math.floor(RESET_CODE_TTL_MS / 1000),
+    cooldownSeconds: Math.floor(RESET_CODE_RESEND_COOLDOWN_MS / 1000),
   };
 }
 

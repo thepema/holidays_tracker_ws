@@ -1,3 +1,4 @@
+import { createRateLimitPreHandler } from '../lib/rateLimiter.js';
 import {
   clearSessionCookie,
   isValidAdminToken,
@@ -20,6 +21,41 @@ import {
 
 const sessionSecurity = [{ SessionCookie: [] }, { AdminBearerAuth: [] }];
 const adminSecurity = [{ AdminBearerAuth: [] }];
+
+const activateRateLimit = createRateLimitPreHandler({
+  bucket: 'route:sesiones:activar',
+  maxRequests: 10,
+  windowMs: 10 * 60 * 1000,
+  errorMessage: 'Demasiados intentos de activación de sesión.',
+});
+
+const recoverRateLimit = createRateLimitPreHandler({
+  bucket: 'route:sesiones:recuperar',
+  maxRequests: 10,
+  windowMs: 10 * 60 * 1000,
+  errorMessage: 'Demasiados intentos de recuperación de sesión.',
+});
+
+const requestSessionMinuteLimit = createRateLimitPreHandler({
+  bucket: 'route:sesiones:solicitar:minuto',
+  maxRequests: 5,
+  windowMs: 60 * 1000,
+  errorMessage: 'Demasiadas solicitudes de código en poco tiempo.',
+});
+
+const requestSessionHourLimit = createRateLimitPreHandler({
+  bucket: 'route:sesiones:solicitar:hora',
+  maxRequests: 20,
+  windowMs: 60 * 60 * 1000,
+  errorMessage: 'Has superado el límite horario de solicitudes desde esta IP.',
+});
+
+const confirmResetRateLimit = createRateLimitPreHandler({
+  bucket: 'route:sesiones:solicitar:confirmar',
+  maxRequests: 10,
+  windowMs: 10 * 60 * 1000,
+  errorMessage: 'Demasiados intentos de confirmación de código.',
+});
 
 export default async function authRoutes(app) {
   app.get('/sesiones/me', {
@@ -94,10 +130,11 @@ export default async function authRoutes(app) {
     },
   };
 
-  app.post('/sesiones/activar', { schema: activateSchema }, activateSessionHandler);
-  app.post('/sesiones/activar/:codigo', { schema: activateSchema }, activateSessionHandler);
+  app.post('/sesiones/activar', { preHandler: activateRateLimit, schema: activateSchema }, activateSessionHandler);
+  app.post('/sesiones/activar/:codigo', { preHandler: activateRateLimit, schema: activateSchema }, activateSessionHandler);
 
   app.post('/sesiones/recuperar', {
+    preHandler: recoverRateLimit,
     schema: {
       tags: ['Sesiones'],
       summary: 'Recuperar sesión mediante token de recuperación',
@@ -191,6 +228,7 @@ export default async function authRoutes(app) {
   };
 
   app.post('/sesiones/solicitar', {
+    preHandler: [requestSessionMinuteLimit, requestSessionHourLimit],
     schema: {
       tags: ['Sesiones'],
       summary: 'Solicitar una nueva sesión mediante verificación numérica por correo',
@@ -228,10 +266,11 @@ export default async function authRoutes(app) {
         if (verificationCode) {
           return handleConfirmResetCode(reply, matchedUser, verificationCode);
         }
-        await initiateSessionResetVerification(matchedUser);
+        const verificationResult = await initiateSessionResetVerification(matchedUser);
         return reply.code(200).send({
           requiereVerificacion: true,
           solicitado: false,
+          cooldownSeconds: verificationResult.cooldownSeconds,
           mensaje:
             'Hemos enviado un código numérico de 6 dígitos a tu correo electrónico. Introdúcelo para confirmar el reseteo y solicitud de sesión.',
         });
@@ -266,12 +305,22 @@ export default async function authRoutes(app) {
         error: 'Debes indicar tu correo electrónico para recibir el código de verificación.',
       });
     } catch (error) {
+      if (error?.statusCode === 429) {
+        if (error.retryAfterSeconds) {
+          reply.header('Retry-After', String(error.retryAfterSeconds));
+        }
+        return reply.code(429).send({
+          error: error.message,
+          ...(error.retryAfterSeconds ? { retryAfterSeconds: error.retryAfterSeconds } : {}),
+        });
+      }
       request.log.error({ err: error }, 'No se pudo enviar la solicitud de sesión');
       return reply.code(503).send({ error: 'No se pudo procesar la verificación de solicitud de sesión.' });
     }
   });
 
   app.post('/sesiones/solicitar/confirmar', {
+    preHandler: confirmResetRateLimit,
     schema: {
       tags: ['Sesiones'],
       summary: 'Confirmar código numérico de verificación y registrar solicitud de sesión',
