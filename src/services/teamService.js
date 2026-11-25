@@ -14,14 +14,24 @@ function normalizeIdList(rawIds) {
 
 function mapTeamRow(row) {
   if (!row) return null;
+  const id = Number(row.id);
+  const nombre = String(row.nombre || '').trim();
+  if (!Number.isInteger(id) || id < 1 || !nombre) {
+    return null;
+  }
+
   const rawUserIds = Array.isArray(row.usuario_ids) ? row.usuario_ids : [];
-  const usuarioIds = rawUserIds
-    .map((id) => Number(id))
-    .filter((id) => Number.isInteger(id) && id > 0);
+  const usuarioIds = [
+    ...new Set(
+      rawUserIds
+        .map((uid) => Number(uid))
+        .filter((uid) => Number.isInteger(uid) && uid > 0),
+    ),
+  ];
 
   return {
-    id: Number(row.id),
-    nombre: String(row.nombre || '').trim(),
+    id,
+    nombre,
     usuarioIds,
     created_at: row.created_at,
     updated_at: row.updated_at,
@@ -43,7 +53,7 @@ export async function listTeams() {
      GROUP BY e.id, e.nombre, e.created_at, e.updated_at
      ORDER BY LOWER(TRIM(e.nombre)) ASC, e.id ASC`,
   );
-  return rows.map(mapTeamRow);
+  return rows.map(mapTeamRow).filter(Boolean);
 }
 
 export async function findTeamById(equipoId, client = pool) {

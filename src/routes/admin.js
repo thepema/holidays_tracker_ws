@@ -3,6 +3,7 @@ import { requireAdmin, createAdminToken, verifyAdminPassword, ADMIN_TOKEN_TTL_SE
 import {
   createUser,
   findUserById,
+  getAdminSessionsSummary,
   listAuthenticatedUsers,
   listNonAdminUsers,
   listUsersWithPendingInvitation,
@@ -111,6 +112,18 @@ export default async function adminRoutes(app) {
   }, async () => {
     const usuarios = await listUsersWithPendingInvitation();
     return { usuarios };
+  });
+
+  app.get('/sesiones/resumen', {
+    preHandler: requireAdmin,
+    schema: {
+      tags: ['Administración'],
+      summary: 'Obtener resumen de sesiones de usuarios (pendientes, solicitados y autenticados)',
+      description: 'Devuelve desde servidor los listados de usuarios con invitación pendiente (`proceso`), solicitudes de reseteo (`solicitado`) y los contadores totales incluyendo usuarios autenticados (`autorizado`).',
+      security: adminSecurity,
+    },
+  }, async () => {
+    return getAdminSessionsSummary();
   });
 
   app.post('/usuarios', {

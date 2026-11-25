@@ -1,34 +1,38 @@
-import { requireAdminOrSession } from '../lib/security.js';
+import { requireAdmin, requireAdminOrSession } from '../lib/security.js';
 import { listAllHolidays, listHolidaysForUser } from '../services/officeService.js';
 import {
   createVacations,
   deleteVacation,
+  listVacationYears,
   listVacations,
   updateVacationDate,
 } from '../services/vacationService.js';
 
 const vacationSecurity = [{ AdminBearerAuth: [] }, { SessionCookie: [] }];
+const adminOnlySecurity = [{ AdminBearerAuth: [] }];
 
 export default async function vacationRoutes(app) {
   app.get('/festivos', {
     preHandler: requireAdminOrSession,
     schema: {
       tags: ['Vacaciones'],
-      summary: 'Consultar días festivos de la oficina del usuario o de todas las oficinas (admin)',
+      summary: 'Consultar días festivos de la oficina del usuario o filtrados (admin)',
       security: vacationSecurity,
       querystring: {
         type: 'object',
         properties: {
           oficinaId: { type: 'integer', minimum: 1 },
+          equipoId: { type: 'integer', minimum: 1 },
           anio: { type: 'integer', minimum: 1900, maximum: 2200 },
+          mes: { type: 'integer', minimum: 1, maximum: 12 },
         },
       },
     },
   }, async (request) => {
     if (request.isAdmin) {
-      const { oficinaId, anio } = request.query || {};
+      const { oficinaId, equipoId, anio, mes } = request.query || {};
       return {
-        festivos: await listAllHolidays({ oficinaId, anio }),
+        festivos: await listAllHolidays({ oficinaId, equipoId, anio, mes }),
       };
     }
     return {
@@ -38,12 +42,25 @@ export default async function vacationRoutes(app) {
     };
   });
 
+  app.get('/vacaciones/anios', {
+    preHandler: requireAdmin,
+    schema: {
+      tags: ['Vacaciones'],
+      summary: 'Obtener años con días de vacaciones registrados (administrador)',
+      security: adminOnlySecurity,
+    },
+  }, async () => {
+    return {
+      anios: await listVacationYears(),
+    };
+  });
+
   app.get('/vacaciones', {
     preHandler: requireAdminOrSession,
     schema: {
       tags: ['Vacaciones'],
-      summary: 'Consultar vacaciones de usuarios o todas las vacaciones como administrador',
-      description: 'El administrador puede filtrar por una lista de IDs en `usuarios`; si no se envía o está vacía, devuelve todas. Un usuario con sesión solo ve sus propias vacaciones.',
+      summary: 'Consultar vacaciones de usuarios o filtradas como administrador',
+      description: 'El administrador puede filtrar por `usuarios`, `anio`, `mes`, `equipoId` y `oficinaId`. Un usuario con sesión solo ve sus propias vacaciones.',
       security: vacationSecurity,
       querystring: {
         type: 'object',
@@ -52,6 +69,7 @@ export default async function vacationRoutes(app) {
           anio: { type: 'integer', minimum: 1900, maximum: 2200, description: 'Año opcional para filtrar las vacaciones (YYYY).' },
           mes: { type: 'integer', minimum: 1, maximum: 12, description: 'Mes opcional para filtrar las vacaciones (1-12).' },
           equipoId: { type: 'integer', minimum: 1, description: 'ID de equipo opcional para filtrar las vacaciones de los miembros de ese equipo.' },
+          oficinaId: { type: 'integer', minimum: 1, description: 'ID de oficina opcional para filtrar las vacaciones de los usuarios de esa oficina.' },
         },
       },
     },
@@ -59,12 +77,13 @@ export default async function vacationRoutes(app) {
     const userIds = request.isAdmin
       ? (request.query.usuarios || [])
       : [request.user.id];
-    const { anio, mes, equipoId } = request.query || {};
+    const { anio, mes, equipoId, oficinaId } = request.query || {};
     return {
       vacaciones: await listVacations(userIds, {
         anio,
         mes,
         equipoId: request.isAdmin ? equipoId : null,
+        oficinaId: request.isAdmin ? oficinaId : null,
       }),
     };
   });

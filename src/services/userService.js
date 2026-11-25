@@ -16,8 +16,23 @@ const USER_TEAMS_SUBQUERY = `COALESCE(
   '[]'::json
 ) AS equipos`;
 
+const USER_CURRENT_YEAR_VACATIONS_SUBQUERY = `COALESCE(
+  (
+    SELECT COUNT(DISTINCT v.fecha)::int
+    FROM vacaciones v
+    WHERE v.usuario_id = u.id
+      AND v.anio = EXTRACT(YEAR FROM CURRENT_DATE)::int
+  ),
+  0
+) AS dias_vacaciones_anio_actual`;
+
 function mapUserWithTeams(row) {
   if (!row) return null;
+  const id = Number(row.id);
+  if (!Number.isInteger(id) || id < 1) {
+    return null;
+  }
+
   const rawEquipos = Array.isArray(row.equipos) ? row.equipos : [];
   const equipos = rawEquipos
     .map((item) => ({
@@ -25,22 +40,39 @@ function mapUserWithTeams(row) {
       nombre: String(item?.nombre || '').trim(),
     }))
     .filter((item) => Number.isInteger(item.id) && item.id > 0 && item.nombre);
+  const equipoIds = equipos.map((e) => e.id);
 
   const oficinaId =
     row.oficina_id !== null && row.oficina_id !== undefined && Number(row.oficina_id) > 0
       ? Number(row.oficina_id)
       : null;
   const oficinaNombre = row.oficina_nombre ? String(row.oficina_nombre).trim() : null;
+  const estadoSesion = String(row.estado_sesion ?? '').trim().toLowerCase();
+  const sesionActiva = estadoSesion === 'autorizado';
+  const solicitudPendiente = estadoSesion === 'solicitado';
+  const rawYearCount = Number(row.dias_vacaciones_anio_actual ?? 0);
+  const diasVacacionesAnioActual =
+    Number.isFinite(rawYearCount) && rawYearCount >= 0 ? Math.trunc(rawYearCount) : 0;
 
   return {
-    ...row,
-    id: Number(row.id),
+    id,
     codigo: String(row.codigo ?? '').trim(),
+    nombre: String(row.nombre ?? '').trim(),
+    apellidos: String(row.apellidos ?? '').trim(),
+    cargo: String(row.cargo ?? '').trim(),
+    email: String(row.email ?? '').trim(),
+    tipo_vacaciones: String(row.tipo_vacaciones ?? '').trim(),
     oficinaId,
     oficinaNombre,
     oficina: oficinaId ? { id: oficinaId, nombre: oficinaNombre || '' } : null,
     equipos,
-    equipoIds: equipos.map((e) => e.id),
+    equipoIds,
+    estadoSesion,
+    sesionActiva,
+    solicitudPendiente,
+    diasVacacionesAnioActual,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
   };
 }
 
@@ -103,9 +135,12 @@ export async function findUserById(id, client = pool) {
   const { rows } = await client.query(
     `SELECT u.id, u.codigo, u.nombre, u.apellidos, u.cargo, u.email, u.tipo_vacaciones, u.oficina_id,
             o.nombre AS oficina_nombre, u.created_at, u.updated_at,
+            s.estado AS estado_sesion,
+            ${USER_CURRENT_YEAR_VACATIONS_SUBQUERY},
             ${USER_TEAMS_SUBQUERY}
      FROM usuarios u
      LEFT JOIN oficinas o ON o.id = u.oficina_id
+     LEFT JOIN sesiones s ON s.usuario_id = u.id
      WHERE u.id = $1`,
     [id],
   );
@@ -199,14 +234,15 @@ export async function listNonAdminUsers() {
     `SELECT u.id, u.codigo, u.nombre, u.apellidos, u.cargo, u.email, u.tipo_vacaciones, u.oficina_id,
             o.nombre AS oficina_nombre, u.created_at, u.updated_at,
             s.estado AS estado_sesion,
+            ${USER_CURRENT_YEAR_VACATIONS_SUBQUERY},
             ${USER_TEAMS_SUBQUERY}
      FROM usuarios u
      LEFT JOIN oficinas o ON o.id = u.oficina_id
      LEFT JOIN sesiones s ON s.usuario_id = u.id
-     WHERE LOWER(TRIM(u.cargo)) NOT IN ('administrador', 'administradora', 'admin')
+      WHERE LOWER(TRIM(u.cargo)) NOT IN ('administrador', 'administradora', 'admin')
      ORDER BY u.id ASC`,
   );
-  return rows.map(mapUserWithTeams);
+  return rows.map(mapUserWithTeams).filter(Boolean);
 }
 
 export async function listUsersWithPendingInvitation() {
@@ -214,6 +250,7 @@ export async function listUsersWithPendingInvitation() {
     `SELECT u.id, u.codigo, u.nombre, u.apellidos, u.cargo, u.email, u.tipo_vacaciones, u.oficina_id,
             o.nombre AS oficina_nombre, u.created_at, u.updated_at,
             s.estado AS estado_sesion,
+            ${USER_CURRENT_YEAR_VACATIONS_SUBQUERY},
             ${USER_TEAMS_SUBQUERY}
      FROM usuarios u
      LEFT JOIN oficinas o ON o.id = u.oficina_id
@@ -222,7 +259,48 @@ export async function listUsersWithPendingInvitation() {
        AND LOWER(TRIM(u.cargo)) NOT IN ('administrador', 'administradora', 'admin')
      ORDER BY u.id ASC`,
   );
-  return rows.map(mapUserWithTeams);
+  return rows.map(mapUserWithTeams).filter(Boolean);
+}
+
+export async function listUsersWithRequestedSession() {
+  const { rows } = await pool.query(
+    `SELECT u.id, u.codigo, u.nombre, u.apellidos, u.cargo, u.email, u.tipo_vacaciones, u.oficina_id,
+            o.nombre AS oficina_nombre, u.created_at, u.updated_at,
+            s.estado AS estado_sesion,
+            ${USER_CURRENT_YEAR_VACATIONS_SUBQUERY},
+            ${USER_TEAMS_SUBQUERY}
+     FROM usuarios u
+     LEFT JOIN oficinas o ON o.id = u.oficina_id
+     INNER JOIN sesiones s ON s.usuario_id = u.id
+     WHERE s.estado = 'solicitado'
+       AND LOWER(TRIM(u.cargo)) NOT IN ('administrador', 'administradora', 'admin')
+     ORDER BY u.id ASC`,
+  );
+  return rows.map(mapUserWithTeams).filter(Boolean);
+}
+
+export async function getAdminSessionsSummary() {
+  const [pendientes, solicitados, authCountResult] = await Promise.all([
+    listUsersWithPendingInvitation(),
+    listUsersWithRequestedSession(),
+    pool.query(
+      `SELECT COUNT(*)::int AS total
+       FROM usuarios u
+       INNER JOIN sesiones s ON s.usuario_id = u.id
+       WHERE s.estado = 'autorizado'
+         AND LOWER(TRIM(u.cargo)) NOT IN ('administrador', 'administradora', 'admin')`,
+    ),
+  ]);
+
+  const totalAutenticados = Number(authCountResult.rows[0]?.total ?? 0);
+  return {
+    pendientes,
+    solicitados,
+    totalPendientes: pendientes.length,
+    totalSolicitados: solicitados.length,
+    totalPendientesYSolicitados: pendientes.length + solicitados.length,
+    totalAutenticados,
+  };
 }
 
 export async function listUsersWithoutActiveSession() {

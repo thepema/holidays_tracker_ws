@@ -71,7 +71,7 @@ const OFFICE_SELECT_BASE = `
   FROM oficinas o
 `;
 
-function mapHolidayItem(item, fallbackOfficeId, fallbackOfficeName, fallbackYear) {
+function mapHolidayItem(item, fallbackOfficeId = 0, fallbackOfficeName = '', fallbackYear) {
   const id = Number(item?.id);
   const calendarioId = Number(item?.calendarioId ?? item?.calendario_id);
   const oficinaId = Number(item?.oficinaId ?? item?.oficina_id ?? fallbackOfficeId);
@@ -99,10 +99,17 @@ function mapOfficeRow(row) {
   if (!row) return null;
   const officeId = Number(row.id);
   const officeName = String(row.nombre || '').trim();
+  if (!Number.isInteger(officeId) || officeId < 1 || !officeName) {
+    return null;
+  }
   const rawUserIds = Array.isArray(row.usuario_ids) ? row.usuario_ids : [];
-  const usuarioIds = rawUserIds
-    .map((id) => Number(id))
-    .filter((id) => Number.isInteger(id) && id > 0);
+  const usuarioIds = [
+    ...new Set(
+      rawUserIds
+        .map((id) => Number(id))
+        .filter((id) => Number.isInteger(id) && id > 0),
+    ),
+  ];
 
   const rawCalendars = Array.isArray(row.calendarios) ? row.calendarios : [];
   const calendarios = rawCalendars
@@ -148,7 +155,7 @@ export async function listOffices(client = pool) {
     `${OFFICE_SELECT_BASE}
      ORDER BY LOWER(TRIM(o.nombre)) ASC, o.id ASC`,
   );
-  return rows.map(mapOfficeRow);
+  return rows.map(mapOfficeRow).filter(Boolean);
 }
 
 export async function findOfficeById(oficinaId, client = pool) {
@@ -503,14 +510,57 @@ export async function listHolidaysForUser(userId, client = pool) {
      ORDER BY df.fecha ASC, df.id ASC`,
     [userId],
   );
-  return rows;
+  return rows.map((row) => mapHolidayItem(row)).filter(Boolean);
 }
 
-export async function listAllHolidays({ oficinaId = null, anio = null } = {}, client = pool) {
+export async function listAllHolidays(
+  { oficinaId = null, equipoId = null, anio = null, mes = null } = {},
+  client = pool,
+) {
   const officeFilter =
     Number.isInteger(Number(oficinaId)) && Number(oficinaId) >= 1 ? Number(oficinaId) : null;
+  const teamFilter =
+    Number.isInteger(Number(equipoId)) && Number(equipoId) >= 1 ? Number(equipoId) : null;
   const yearFilter =
     Number.isInteger(Number(anio)) && Number(anio) > 1900 ? Number(anio) : null;
+  const monthFilter =
+    Number.isInteger(Number(mes)) && Number(mes) >= 1 && Number(mes) <= 12 ? Number(mes) : null;
+
+  const conditions = [];
+  const params = [];
+
+  if (officeFilter !== null) {
+    params.push(officeFilter);
+    conditions.push(`co.oficina_id = $${params.length}::bigint`);
+  } else if (teamFilter !== null) {
+    params.push(teamFilter);
+    conditions.push(
+      `EXISTS (
+        SELECT 1
+        FROM usuarios u
+        INNER JOIN usuarios_equipos ue ON ue.usuario_id = u.id
+        WHERE u.oficina_id = co.oficina_id
+          AND ue.equipo_id = $${params.length}::bigint
+      )`,
+    );
+  }
+
+  if (yearFilter !== null && monthFilter !== null) {
+    params.push(yearFilter, monthFilter);
+    const yIdx = params.length - 1;
+    const mIdx = params.length;
+    conditions.push(
+      `df.fecha >= make_date($${yIdx}::int, $${mIdx}::int, 1) AND df.fecha < (make_date($${yIdx}::int, $${mIdx}::int, 1) + INTERVAL '1 month')`,
+    );
+  } else if (yearFilter !== null) {
+    params.push(yearFilter);
+    conditions.push(`co.anio = $${params.length}::int`);
+  } else if (monthFilter !== null) {
+    params.push(monthFilter);
+    conditions.push(`EXTRACT(MONTH FROM df.fecha) = $${params.length}::int`);
+  }
+
+  const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
   const { rows } = await client.query(
     `SELECT df.id,
@@ -523,12 +573,11 @@ export async function listAllHolidays({ oficinaId = null, anio = null } = {}, cl
      FROM dias_festivos df
      INNER JOIN calendarios_oficina co ON co.id = df.calendario_id
      INNER JOIN oficinas o ON o.id = co.oficina_id
-     WHERE ($1::bigint IS NULL OR co.oficina_id = $1::bigint)
-       AND ($2::int IS NULL OR co.anio = $2::int)
+     ${whereClause}
      ORDER BY df.fecha ASC, o.nombre ASC, df.id ASC`,
-    [officeFilter, yearFilter],
+    params,
   );
-  return rows;
+  return rows.map((row) => mapHolidayItem(row)).filter(Boolean);
 }
 
 export async function findUserHolidayConflicts(userId, dateStrings, client = pool) {
@@ -552,5 +601,5 @@ export async function findUserHolidayConflicts(userId, dateStrings, client = poo
      ORDER BY df.fecha ASC, df.id ASC`,
     [userId, dateStrings],
   );
-  return rows;
+  return rows.map((row) => mapHolidayItem(row)).filter(Boolean);
 }

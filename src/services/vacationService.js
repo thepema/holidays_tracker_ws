@@ -31,10 +31,17 @@ export async function createVacations(userId, inputDates) {
         `INSERT INTO vacaciones (usuario_id, anio, fecha)
          VALUES ($1, $2, $3)
          ON CONFLICT (usuario_id, fecha) DO NOTHING
-         RETURNING id, usuario_id AS "usuarioId", anio, fecha`,
+         RETURNING id, usuario_id AS "usuarioId", anio, TO_CHAR(fecha, 'YYYY-MM-DD') AS fecha`,
         [userId, year, date],
       );
-      inserted.push(...rows);
+      for (const row of rows) {
+        inserted.push({
+          id: Number(row.id),
+          usuarioId: Number(row.usuarioId),
+          anio: Number(row.anio),
+          fecha: String(row.fecha || '').trim(),
+        });
+      }
     }
     await client.query('COMMIT');
     return { invalid: false, inserted };
@@ -63,9 +70,22 @@ function getTodayDateKey() {
   return `${y}-${m}-${d}`;
 }
 
+const VACATION_USER_TEAMS_SUBQUERY = `COALESCE(
+  (
+    SELECT json_agg(
+      json_build_object('id', e.id, 'nombre', e.nombre)
+      ORDER BY LOWER(TRIM(e.nombre)) ASC, e.id ASC
+    )
+    FROM usuarios_equipos ue
+    INNER JOIN equipos e ON e.id = ue.equipo_id
+    WHERE ue.usuario_id = u.id
+  ),
+  '[]'::json
+) AS equipos`;
+
 export async function listVacations(
   userIds = null,
-  { anio = null, mes = null, equipoId = null } = {},
+  { anio = null, mes = null, equipoId = null, oficinaId = null } = {},
 ) {
   const filter = Array.isArray(userIds) && userIds.length > 0 ? userIds : null;
   const yearFilter = Number.isInteger(Number(anio)) && Number(anio) > 1900 ? Number(anio) : null;
@@ -73,6 +93,50 @@ export async function listVacations(
     Number.isInteger(Number(mes)) && Number(mes) >= 1 && Number(mes) <= 12 ? Number(mes) : null;
   const teamFilter =
     Number.isInteger(Number(equipoId)) && Number(equipoId) >= 1 ? Number(equipoId) : null;
+  const officeFilter =
+    Number.isInteger(Number(oficinaId)) && Number(oficinaId) >= 1 ? Number(oficinaId) : null;
+
+  const conditions = [];
+  const params = [];
+
+  if (filter) {
+    params.push(filter);
+    conditions.push(`v.usuario_id = ANY($${params.length}::bigint[])`);
+  }
+
+  if (yearFilter !== null && monthFilter !== null) {
+    params.push(yearFilter, monthFilter);
+    const yIdx = params.length - 1;
+    const mIdx = params.length;
+    conditions.push(
+      `v.fecha >= make_date($${yIdx}::int, $${mIdx}::int, 1) AND v.fecha < (make_date($${yIdx}::int, $${mIdx}::int, 1) + INTERVAL '1 month')`,
+    );
+  } else if (yearFilter !== null) {
+    params.push(yearFilter);
+    conditions.push(`v.anio = $${params.length}::int`);
+  } else if (monthFilter !== null) {
+    params.push(monthFilter);
+    conditions.push(`EXTRACT(MONTH FROM v.fecha) = $${params.length}::int`);
+  }
+
+  if (teamFilter !== null) {
+    params.push(teamFilter);
+    conditions.push(
+      `EXISTS (
+        SELECT 1
+        FROM usuarios_equipos ue
+        WHERE ue.usuario_id = v.usuario_id
+          AND ue.equipo_id = $${params.length}::bigint
+      )`,
+    );
+  }
+
+  if (officeFilter !== null) {
+    params.push(officeFilter);
+    conditions.push(`u.oficina_id = $${params.length}::bigint`);
+  }
+
+  const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
   const { rows } = await pool.query(
     `SELECT v.id,
@@ -83,25 +147,53 @@ export async function listVacations(
             u.nombre,
             u.apellidos,
             u.email,
-            u.cargo
+            u.cargo,
+            u.oficina_id AS "oficinaId",
+            o.nombre AS "oficinaNombre",
+            ${VACATION_USER_TEAMS_SUBQUERY}
      FROM vacaciones v
      LEFT JOIN usuarios u ON u.id = v.usuario_id
-     WHERE ($1::bigint[] IS NULL OR v.usuario_id = ANY($1::bigint[]))
-       AND ($2::int IS NULL OR EXTRACT(YEAR FROM v.fecha) = $2::int)
-       AND ($3::int IS NULL OR EXTRACT(MONTH FROM v.fecha) = $3::int)
-       AND (
-         $4::bigint IS NULL
-         OR EXISTS (
-           SELECT 1
-           FROM usuarios_equipos ue
-           WHERE ue.usuario_id = v.usuario_id
-             AND ue.equipo_id = $4::bigint
-         )
-       )
+     LEFT JOIN oficinas o ON o.id = u.oficina_id
+     ${whereClause}
      ORDER BY v.fecha ASC, u.nombre ASC, u.apellidos ASC, v.id ASC`,
-    [filter, yearFilter, monthFilter, teamFilter],
+    params,
   );
-  return rows;
+  return rows.map((row) => ({
+    id: Number(row.id),
+    usuarioId: Number(row.usuarioId),
+    anio: Number(row.anio),
+    fecha: String(row.fecha || '').trim(),
+    ...(row.codigo ? { codigo: String(row.codigo).trim() } : {}),
+    ...(row.nombre ? { nombre: String(row.nombre).trim() } : {}),
+    ...(row.apellidos ? { apellidos: String(row.apellidos).trim() } : {}),
+    ...(row.email ? { email: String(row.email).trim() } : {}),
+    ...(row.cargo ? { cargo: String(row.cargo).trim() } : {}),
+    oficinaId:
+      row.oficinaId !== null && row.oficinaId !== undefined && Number(row.oficinaId) > 0
+        ? Number(row.oficinaId)
+        : null,
+    oficinaNombre: row.oficinaNombre ? String(row.oficinaNombre).trim() : null,
+    equipos: Array.isArray(row.equipos)
+      ? row.equipos
+          .map((item) => ({
+            id: Number(item?.id),
+            nombre: String(item?.nombre || '').trim(),
+          }))
+          .filter((item) => Number.isInteger(item.id) && item.id > 0 && item.nombre)
+      : [],
+  }));
+}
+
+export async function listVacationYears() {
+  const { rows } = await pool.query(
+    `SELECT DISTINCT anio
+     FROM vacaciones
+     WHERE anio > 1900
+     ORDER BY anio DESC`,
+  );
+  return rows
+    .map((row) => Number(row.anio))
+    .filter((year) => Number.isInteger(year) && year > 1900);
 }
 
 export async function updateVacationDate(vacationId, userId, newDateRaw, isAdmin = false) {
@@ -147,10 +239,20 @@ export async function updateVacationDate(vacationId, userId, newDateRaw, isAdmin
       `UPDATE vacaciones
        SET fecha = $1, anio = $2, updated_at = NOW()
        WHERE id = $3
-       RETURNING id, usuario_id AS "usuarioId", anio, fecha`,
+       RETURNING id, usuario_id AS "usuarioId", anio, TO_CHAR(fecha, 'YYYY-MM-DD') AS fecha`,
       [newDate, newYear, vacationId],
     );
-    return { updated: rows[0] };
+    const updatedRow = rows[0];
+    return {
+      updated: updatedRow
+        ? {
+            id: Number(updatedRow.id),
+            usuarioId: Number(updatedRow.usuarioId),
+            anio: Number(updatedRow.anio),
+            fecha: String(updatedRow.fecha || '').trim(),
+          }
+        : null,
+    };
   } catch (error) {
     if (error.code === '23505') {
       return { duplicate: true };
