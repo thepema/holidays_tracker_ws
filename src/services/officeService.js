@@ -1,4 +1,5 @@
 import pool from '../db.js';
+import { appError } from '../lib/errors.js';
 
 function normalizeIdList(rawIds) {
   if (!Array.isArray(rawIds)) return [];
@@ -188,7 +189,7 @@ export async function setOfficeUsers(oficinaId, rawUsuarioIds, client = pool) {
 export async function createOffice({ nombre, usuarioIds }) {
   const cleanName = String(nombre || '').trim();
   if (!cleanName || cleanName.length > 120) {
-    return { invalid: true };
+    throw appError('OFFICE_INVALID_NAME');
   }
 
   const client = await pool.connect();
@@ -201,7 +202,7 @@ export async function createOffice({ nombre, usuarioIds }) {
     );
     if (dupRows[0]) {
       await client.query('ROLLBACK');
-      return { duplicate: true };
+      throw appError('OFFICE_DUPLICATE');
     }
 
     const { rows } = await client.query(
@@ -222,7 +223,7 @@ export async function createOffice({ nombre, usuarioIds }) {
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});
     if (error.code === '23505') {
-      return { duplicate: true };
+      throw appError('OFFICE_DUPLICATE');
     }
     throw error;
   } finally {
@@ -238,14 +239,14 @@ export async function updateOffice(oficinaId, { nombre, usuarioIds }) {
     const existing = await findOfficeById(oficinaId, client);
     if (!existing) {
       await client.query('ROLLBACK');
-      return { notFound: true };
+      throw appError('OFFICE_NOT_FOUND');
     }
 
     if (nombre !== undefined) {
       const cleanName = String(nombre || '').trim();
       if (!cleanName || cleanName.length > 120) {
         await client.query('ROLLBACK');
-        return { invalid: true };
+        throw appError('OFFICE_INVALID_NAME');
       }
 
       const { rows: dupRows } = await client.query(
@@ -254,7 +255,7 @@ export async function updateOffice(oficinaId, { nombre, usuarioIds }) {
       );
       if (dupRows[0]) {
         await client.query('ROLLBACK');
-        return { duplicate: true };
+        throw appError('OFFICE_DUPLICATE_OTHER');
       }
 
       await client.query(
@@ -275,7 +276,7 @@ export async function updateOffice(oficinaId, { nombre, usuarioIds }) {
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});
     if (error.code === '23505') {
-      return { duplicate: true };
+      throw appError('OFFICE_DUPLICATE_OTHER');
     }
     throw error;
   } finally {
@@ -293,7 +294,7 @@ export async function deleteOffice(oficinaId) {
     );
     if (!existing[0]) {
       await client.query('ROLLBACK');
-      return { notFound: true };
+      throw appError('OFFICE_NOT_FOUND');
     }
 
     await client.query(
@@ -348,7 +349,7 @@ export async function ensureOfficeCalendar(oficinaId, anio, client = pool) {
 export async function createOfficeCalendar(oficinaId, anio) {
   const yearNum = Number(anio);
   if (!Number.isInteger(yearNum) || yearNum < 1900 || yearNum > 2200) {
-    return { invalidYear: true };
+    throw appError('OFFICE_CALENDAR_INVALID_YEAR');
   }
 
   const client = await pool.connect();
@@ -360,7 +361,7 @@ export async function createOfficeCalendar(oficinaId, anio) {
     );
     if (!officeRows[0]) {
       await client.query('ROLLBACK');
-      return { notFound: true };
+      throw appError('OFFICE_NOT_FOUND');
     }
 
     await ensureOfficeCalendar(oficinaId, yearNum, client);
@@ -387,7 +388,7 @@ export async function deleteOfficeCalendar(oficinaId, calendarioId) {
     );
     if (!existing[0]) {
       await client.query('ROLLBACK');
-      return { notFound: true };
+      throw appError('OFFICE_CALENDAR_NOT_FOUND');
     }
 
     await client.query(`DELETE FROM dias_festivos WHERE calendario_id = $1`, [calendarioId]);
@@ -410,12 +411,12 @@ export async function addOfficeHoliday(oficinaId, { fecha, nombre, anio }) {
   const cleanDate = String(fecha || '').trim();
   const cleanName = String(nombre || '').trim();
   if (!isValidDateKey(cleanDate) || !cleanName || cleanName.length > 120) {
-    return { invalid: true };
+    throw appError('OFFICE_HOLIDAY_INVALID');
   }
 
   const yearFromDate = Number(cleanDate.slice(0, 4));
   if (anio !== undefined && anio !== null && anio !== '' && Number(anio) !== yearFromDate) {
-    return { invalidYearMismatch: true };
+    throw appError('OFFICE_HOLIDAY_YEAR_MISMATCH');
   }
 
   const client = await pool.connect();
@@ -427,7 +428,7 @@ export async function addOfficeHoliday(oficinaId, { fecha, nombre, anio }) {
     );
     if (!officeRows[0]) {
       await client.query('ROLLBACK');
-      return { notFound: true };
+      throw appError('OFFICE_NOT_FOUND');
     }
 
     const calendar = await ensureOfficeCalendar(oficinaId, yearFromDate, client);
@@ -440,7 +441,7 @@ export async function addOfficeHoliday(oficinaId, { fecha, nombre, anio }) {
     );
     if (dupRows[0]) {
       await client.query('ROLLBACK');
-      return { duplicate: true };
+      throw appError('OFFICE_HOLIDAY_DUPLICATE');
     }
 
     await client.query(
@@ -456,7 +457,7 @@ export async function addOfficeHoliday(oficinaId, { fecha, nombre, anio }) {
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});
     if (error.code === '23505') {
-      return { duplicate: true };
+      throw appError('OFFICE_HOLIDAY_DUPLICATE');
     }
     throw error;
   } finally {
@@ -479,7 +480,7 @@ export async function deleteOfficeHoliday(oficinaId, festivoId) {
     );
     if (!rows[0]) {
       await client.query('ROLLBACK');
-      return { notFound: true };
+      throw appError('OFFICE_HOLIDAY_NOT_FOUND');
     }
 
     const office = await findOfficeById(oficinaId, client);

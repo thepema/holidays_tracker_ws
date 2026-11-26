@@ -1,5 +1,6 @@
 import mcpPlugin from '@platformatic/mcp';
 import { Type } from '@sinclair/typebox';
+import { AppError } from '../lib/errors.js';
 import { authenticateMcpApiKey } from '../services/sessionService.js';
 import { findUserById } from '../services/userService.js';
 import {
@@ -52,6 +53,28 @@ function getAuthenticatedMcpUser(context) {
   return context?.request?.mcpUser || null;
 }
 
+function withMcpToolHandler(handler) {
+  return async (params, context) => {
+    const mcpUser = getAuthenticatedMcpUser(context);
+    if (!mcpUser) {
+      return errorContent('Usuario no autenticado.');
+    }
+    try {
+      return await handler(params, mcpUser, context);
+    } catch (error) {
+      if (error instanceof AppError) {
+        const extraDetails = Object.keys(error.extraBody).length
+          ? error.extraBody
+          : error.params?.holiday
+            ? { festivo: error.params.holiday }
+            : undefined;
+        return errorContent(error.message, extraDetails);
+      }
+      throw error;
+    }
+  };
+}
+
 export default async function mcpVacationsPlugin(app) {
   if (!app.hasRequestDecorator('mcpUser')) {
     app.decorateRequest('mcpUser', null);
@@ -91,9 +114,9 @@ export default async function mcpVacationsPlugin(app) {
       version: '1.0.0',
     },
     capabilities: {
-      tools: { listChanged: true },
+      tools: {},
     },
-    enableSSE: true,
+    enableSSE: false,
     transformRouteSchema: (schema) => ({
       ...schema,
       tags: ['MCP'],
@@ -110,15 +133,10 @@ export default async function mcpVacationsPlugin(app) {
         'Obtiene la información del perfil del usuario autenticado mediante su API key.',
       inputSchema: Type.Object({}),
     },
-    async (_params, context) => {
-      const mcpUser = getAuthenticatedMcpUser(context);
-      if (!mcpUser) {
-        return errorContent('Usuario no autenticado.');
-      }
-
+    withMcpToolHandler(async (_params, mcpUser) => {
       const profile = await findUserById(mcpUser.id);
       return jsonContent({ usuario: profile || mcpUser });
-    },
+    }),
   );
 
   app.mcpAddTool(
@@ -135,19 +153,14 @@ export default async function mcpVacationsPlugin(app) {
         ),
       }),
     },
-    async (params, context) => {
-      const mcpUser = getAuthenticatedMcpUser(context);
-      if (!mcpUser) {
-        return errorContent('Usuario no autenticado.');
-      }
-
+    withMcpToolHandler(async (params, mcpUser) => {
       const vacaciones = await listVacations([mcpUser.id], {
         anio: params.anio,
         mes: params.mes,
       });
 
       return jsonContent({ total: vacaciones.length, vacaciones });
-    },
+    }),
   );
 
   app.mcpAddTool(
@@ -165,12 +178,7 @@ export default async function mcpVacationsPlugin(app) {
         ),
       }),
     },
-    async (params, context) => {
-      const mcpUser = getAuthenticatedMcpUser(context);
-      if (!mcpUser) {
-        return errorContent('Usuario no autenticado.');
-      }
-
+    withMcpToolHandler(async (params, mcpUser) => {
       const todayKey = getTodayDateKey();
       const pastDates = params.fechas.filter((f) => f < todayKey);
       if (pastDates.length > 0) {
@@ -180,33 +188,12 @@ export default async function mcpVacationsPlugin(app) {
         );
       }
 
-      try {
-        const result = await createVacations(mcpUser.id, params.fechas);
-        if (result.invalid) {
-          return errorContent(
-            'fechas debe ser una lista de 1 a 366 fechas válidas con formato YYYY-MM-DD.',
-          );
-        }
-        if (result.holidayConflict) {
-          const lista = result.holidays
-            .map((h) => `${h.fecha} (${h.nombre})`)
-            .join(', ');
-          return errorContent(
-            `No se pueden registrar vacaciones en días festivos de la oficina asignada: ${lista}.`,
-            { festivos: result.holidays },
-          );
-        }
-        return jsonContent({
-          guardadas: result.inserted.length,
-          vacaciones: result.inserted,
-        });
-      } catch (error) {
-        if (error.code === '23503') {
-          return errorContent('Usuario no encontrado.');
-        }
-        throw error;
-      }
-    },
+      const result = await createVacations(mcpUser.id, params.fechas);
+      return jsonContent({
+        guardadas: result.inserted.length,
+        vacaciones: result.inserted,
+      });
+    }),
   );
 
   app.mcpAddTool(
@@ -225,50 +212,15 @@ export default async function mcpVacationsPlugin(app) {
         }),
       }),
     },
-    async (params, context) => {
-      const mcpUser = getAuthenticatedMcpUser(context);
-      if (!mcpUser) {
-        return errorContent('Usuario no autenticado.');
-      }
-
+    withMcpToolHandler(async (params, mcpUser) => {
       const result = await updateVacationDate(
         params.vacacionId,
         mcpUser.id,
         params.nuevaFecha,
         false,
       );
-
-      if (result.invalid) {
-        return errorContent('La nueva fecha debe tener formato válido YYYY-MM-DD.');
-      }
-      if (result.pastTargetDate) {
-        return errorContent(
-          'No puedes cambiar un día de vacaciones a una fecha que ya ha pasado.',
-        );
-      }
-      if (result.notFound) {
-        return errorContent('Día de vacaciones no encontrado.');
-      }
-      if (result.forbidden) {
-        return errorContent('No tienes permiso para modificar este día de vacaciones.');
-      }
-      if (result.pastDate) {
-        return errorContent(
-          'No se pueden modificar días de vacaciones cuya fecha ya ha pasado.',
-        );
-      }
-      if (result.holidayConflict) {
-        return errorContent(
-          `No puedes mover las vacaciones al ${params.nuevaFecha} porque es día festivo en tu oficina (${result.holiday.nombre}).`,
-          { festivo: result.holiday },
-        );
-      }
-      if (result.duplicate) {
-        return errorContent('Ya tienes registrado ese día de vacaciones.');
-      }
-
       return jsonContent({ vacacion: result.updated });
-    },
+    }),
   );
 
   app.mcpAddTool(
@@ -283,28 +235,10 @@ export default async function mcpVacationsPlugin(app) {
         }),
       }),
     },
-    async (params, context) => {
-      const mcpUser = getAuthenticatedMcpUser(context);
-      if (!mcpUser) {
-        return errorContent('Usuario no autenticado.');
-      }
-
+    withMcpToolHandler(async (params, mcpUser) => {
       const result = await deleteVacation(params.vacacionId, mcpUser.id, false);
-
-      if (result.notFound) {
-        return errorContent('Día de vacaciones no encontrado.');
-      }
-      if (result.forbidden) {
-        return errorContent('No tienes permiso para eliminar este día de vacaciones.');
-      }
-      if (result.pastDate) {
-        return errorContent(
-          'No se pueden eliminar días de vacaciones cuya fecha ya ha pasado.',
-        );
-      }
-
       return jsonContent({ eliminado: true, id: result.id });
-    },
+    }),
   );
 
   app.mcpAddTool(
@@ -321,12 +255,7 @@ export default async function mcpVacationsPlugin(app) {
         ),
       }),
     },
-    async (params, context) => {
-      const mcpUser = getAuthenticatedMcpUser(context);
-      if (!mcpUser) {
-        return errorContent('Usuario no autenticado.');
-      }
-
+    withMcpToolHandler(async (params, mcpUser) => {
       let festivos = await listHolidaysForUser(mcpUser.id);
       if (params.anio !== undefined) {
         festivos = festivos.filter((h) => h.anio === params.anio);
@@ -341,6 +270,6 @@ export default async function mcpVacationsPlugin(app) {
         total: festivos.length,
         festivos,
       });
-    },
+    }),
   );
 }

@@ -1,3 +1,4 @@
+import { AppError, appError } from '../lib/errors.js';
 import { createRateLimitPreHandler } from '../lib/rateLimiter.js';
 import {
   clearSessionCookie,
@@ -102,12 +103,10 @@ export default async function authRoutes(app) {
         },
       },
     },
-  }, async (request, reply) => {
+  }, async (request) => {
     const apiToken = await getSessionApiToken(request.user.id);
     if (!apiToken) {
-      return reply.code(403).send({
-        error: 'Solo los usuarios con sesión activa disponen de API token para el agente de IA.',
-      });
+      throw appError('API_TOKEN_FORBIDDEN');
     }
     return {
       apiToken,
@@ -118,11 +117,11 @@ export default async function authRoutes(app) {
   const activateSessionHandler = async (request, reply) => {
     const codigo = request.params?.codigo || request.body?.codigo || request.body?.request_token || request.body?.requestToken || request.query?.codigo || request.query?.request_token;
     if (typeof codigo !== 'string' || codigo.length < 20 || codigo.length > 200) {
-      return reply.code(400).send({ error: 'Se requiere un código de acceso válido.' });
+      throw appError('INVALID_ACCESS_CODE_FORMAT');
     }
     try {
       const result = await activateSession(codigo);
-      if (!result) return reply.code(401).send({ error: 'El código no es válido o ya fue utilizado.' });
+      if (!result) throw appError('INVALID_OR_USED_ACCESS_CODE');
       setSessionCookie(reply, result.token);
       return {
         usuario: result.user,
@@ -130,8 +129,8 @@ export default async function authRoutes(app) {
         codigoRecuperacion: result.recoveryCode,
       };
     } catch (error) {
-      request.log.error({ err: error }, 'No se pudo activar la sesión');
-      return reply.code(503).send({ error: 'No se pudo activar la sesión.' });
+      if (error instanceof AppError) throw error;
+      throw appError('SESSION_ACTIVATION_FAILED', { cause: error });
     }
   };
 
@@ -223,12 +222,12 @@ export default async function authRoutes(app) {
     const email = typeof body.email === 'string' ? body.email.trim() : '';
 
     if (!codigoRecuperacion) {
-      return reply.code(400).send({ error: 'Se requiere un token de recuperación válido.' });
+      throw appError('INVALID_RECOVERY_TOKEN_FORMAT');
     }
     try {
       const result = await recoverSession(codigoRecuperacion, email);
       if (!result) {
-        return reply.code(401).send({ error: 'El token de recuperación no es válido o la sesión fue revocada.' });
+        throw appError('INVALID_OR_REVOKED_RECOVERY_TOKEN');
       }
       setSessionCookie(reply, result.token);
       return {
@@ -237,33 +236,13 @@ export default async function authRoutes(app) {
         codigoRecuperacion: result.recoveryCode,
       };
     } catch (error) {
-      request.log.error({ err: error }, 'No se pudo recuperar la sesión');
-      return reply.code(503).send({ error: 'No se pudo recuperar la sesión.' });
+      if (error instanceof AppError) throw error;
+      throw appError('SESSION_RECOVERY_FAILED', { cause: error });
     }
   });
 
   const handleConfirmResetCode = async (reply, matchedUser, verificationCode) => {
-    const result = await confirmSessionResetWithCode(matchedUser, verificationCode);
-    if (result.invalidFormat) {
-      return reply.code(400).send({
-        error: 'El código de verificación debe tener 6 dígitos numéricos.',
-      });
-    }
-    if (result.expiredOrMissing) {
-      return reply.code(400).send({
-        error: 'No hay ningún código pendiente o el código ha caducado. Solicita uno nuevo.',
-      });
-    }
-    if (result.tooManyAttempts) {
-      return reply.code(429).send({
-        error: 'Has superado el máximo de intentos. Solicita un nuevo código de verificación.',
-      });
-    }
-    if (result.invalidCode) {
-      return reply.code(401).send({
-        error: `El código numérico no es correcto. Te quedan ${result.remainingAttempts} intentos.`,
-      });
-    }
+    await confirmSessionResetWithCode(matchedUser, verificationCode);
     return reply.code(202).send({
       solicitado: true,
       mensaje: 'Código verificado. Solicitud de sesión registrada correctamente.',
@@ -305,9 +284,7 @@ export default async function authRoutes(app) {
       if (email) {
         const matchedUser = await findUserByEmail(email);
         if (!matchedUser) {
-          return reply.code(404).send({
-            error: 'No se ha encontrado ningún usuario con ese correo electrónico.',
-          });
+          throw appError('USER_EMAIL_NOT_FOUND');
         }
         if (verificationCode) {
           return handleConfirmResetCode(reply, matchedUser, verificationCode);
@@ -325,12 +302,10 @@ export default async function authRoutes(app) {
       if (Number.isInteger(body.usuarioId) && body.usuarioId >= 1) {
         const bearerToken = request.headers.authorization?.replace(/^Bearer\s+/i, '') || '';
         if (!isValidAdminToken(bearerToken)) {
-          return reply.code(401).send({
-            error: 'No autorizado para solicitar una sesión por usuarioId.',
-          });
+          throw appError('ADMIN_USER_ID_UNAUTHORIZED');
         }
         const userById = await findUserById(body.usuarioId);
-        if (!userById) return reply.code(404).send({ error: 'Usuario no encontrado.' });
+        if (!userById) throw appError('USER_NOT_FOUND');
         await markSessionAsRequested(userById, { initiatedByAdmin: true });
         return reply.code(202).send({
           solicitado: true,
@@ -347,21 +322,10 @@ export default async function authRoutes(app) {
         });
       }
 
-      return reply.code(400).send({
-        error: 'Debes indicar tu correo electrónico para recibir el código de verificación.',
-      });
+      throw appError('RESET_EMAIL_REQUIRED');
     } catch (error) {
-      if (error?.statusCode === 429) {
-        if (error.retryAfterSeconds) {
-          reply.header('Retry-After', String(error.retryAfterSeconds));
-        }
-        return reply.code(429).send({
-          error: error.message,
-          ...(error.retryAfterSeconds ? { retryAfterSeconds: error.retryAfterSeconds } : {}),
-        });
-      }
-      request.log.error({ err: error }, 'No se pudo enviar la solicitud de sesión');
-      return reply.code(503).send({ error: 'No se pudo procesar la verificación de solicitud de sesión.' });
+      if (error instanceof AppError) throw error;
+      throw appError('SESSION_REQUEST_FAILED', { cause: error });
     }
   });
 
@@ -393,22 +357,18 @@ export default async function authRoutes(app) {
             : '';
 
       if (!email) {
-        return reply.code(400).send({
-          error: 'Debes indicar tu correo electrónico.',
-        });
+        throw appError('CONFIRM_EMAIL_REQUIRED');
       }
 
       const matchedUser = await findUserByEmail(email);
       if (!matchedUser) {
-        return reply.code(404).send({
-          error: 'No se ha encontrado ningún usuario con ese correo electrónico.',
-        });
+        throw appError('USER_EMAIL_NOT_FOUND');
       }
 
       return handleConfirmResetCode(reply, matchedUser, verificationCode);
     } catch (error) {
-      request.log.error({ err: error }, 'No se pudo confirmar la solicitud de sesión');
-      return reply.code(503).send({ error: 'No se pudo confirmar la solicitud de sesión.' });
+      if (error instanceof AppError) throw error;
+      throw appError('SESSION_CONFIRM_FAILED', { cause: error });
     }
   });
 
@@ -425,13 +385,13 @@ export default async function authRoutes(app) {
         properties: { usuarioId: { type: 'integer', minimum: 1 } },
       },
     },
-  }, async (request, reply) => {
+  }, async (request) => {
     const { usuarioId } = request.body || {};
     if (!Number.isInteger(usuarioId) || usuarioId < 1) {
-      return reply.code(400).send({ error: 'Se requiere un usuarioId válido.' });
+      throw appError('VALID_USER_ID_REQUIRED');
     }
     const user = await findUserById(usuarioId);
-    if (!user) return reply.code(404).send({ error: 'Usuario no encontrado.' });
+    if (!user) throw appError('USER_NOT_FOUND');
     await revokeSession(usuarioId);
     return { cerrado: true, usuarioId };
   });

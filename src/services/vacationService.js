@@ -1,4 +1,5 @@
 import pool from '../db.js';
+import { appError, rethrowPgError } from '../lib/errors.js';
 import { findUserHolidayConflicts } from './officeService.js';
 
 function parseDates(dates) {
@@ -15,14 +16,14 @@ function parseDates(dates) {
 
 export async function createVacations(userId, inputDates) {
   const dates = parseDates(inputDates);
-  if (!dates) return { invalid: true };
+  if (!dates) throw appError('VACATION_INVALID_DATES_LIST');
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     const conflicts = await findUserHolidayConflicts(userId, dates, client);
     if (conflicts.length > 0) {
       await client.query('ROLLBACK');
-      return { invalid: false, holidayConflict: true, holidays: conflicts };
+      throw appError('VACATION_CREATE_HOLIDAY_CONFLICT', { holidays: conflicts });
     }
     const inserted = [];
     for (const date of dates) {
@@ -44,10 +45,10 @@ export async function createVacations(userId, inputDates) {
       }
     }
     await client.query('COMMIT');
-    return { invalid: false, inserted };
+    return { inserted };
   } catch (error) {
-    await client.query('ROLLBACK');
-    throw error;
+    await client.query('ROLLBACK').catch(() => {});
+    rethrowPgError(error, 'vacation');
   } finally {
     client.release();
   }
@@ -199,13 +200,13 @@ export async function listVacationYears() {
 export async function updateVacationDate(vacationId, userId, newDateRaw, isAdmin = false) {
   const parsed = parseDates([newDateRaw]);
   if (!parsed || parsed.length !== 1) {
-    return { invalid: true };
+    throw appError('VACATION_INVALID_DATE_FORMAT');
   }
   const newDate = parsed[0];
   const todayKey = getTodayDateKey();
 
   if (!isAdmin && newDate < todayKey) {
-    return { pastTargetDate: true };
+    throw appError('VACATION_PAST_TARGET_DATE');
   }
 
   const { rows: existingRows } = await pool.query(
@@ -216,21 +217,24 @@ export async function updateVacationDate(vacationId, userId, newDateRaw, isAdmin
   );
   const existing = existingRows[0];
   if (!existing) {
-    return { notFound: true };
+    throw appError('VACATION_NOT_FOUND');
   }
 
   if (!isAdmin && Number(existing.usuarioId) !== Number(userId)) {
-    return { forbidden: true };
+    throw appError('VACATION_UPDATE_FORBIDDEN');
   }
 
   const currentFecha = normalizeSqlDate(existing.fecha);
   if (!isAdmin && currentFecha < todayKey) {
-    return { pastDate: true };
+    throw appError('VACATION_UPDATE_PAST_DATE');
   }
 
   const conflicts = await findUserHolidayConflicts(existing.usuarioId, [newDate]);
   if (conflicts.length > 0) {
-    return { holidayConflict: true, holiday: conflicts[0] };
+    throw appError('VACATION_UPDATE_HOLIDAY_CONFLICT', {
+      fecha: newDateRaw,
+      holiday: conflicts[0],
+    });
   }
 
   const newYear = Number(newDate.slice(0, 4));
@@ -254,10 +258,7 @@ export async function updateVacationDate(vacationId, userId, newDateRaw, isAdmin
         : null,
     };
   } catch (error) {
-    if (error.code === '23505') {
-      return { duplicate: true };
-    }
-    throw error;
+    rethrowPgError(error, 'vacation');
   }
 }
 
@@ -271,16 +272,16 @@ export async function deleteVacation(vacationId, userId, isAdmin = false) {
   );
   const existing = existingRows[0];
   if (!existing) {
-    return { notFound: true };
+    throw appError('VACATION_NOT_FOUND');
   }
 
   if (!isAdmin && Number(existing.usuarioId) !== Number(userId)) {
-    return { forbidden: true };
+    throw appError('VACATION_DELETE_FORBIDDEN');
   }
 
   const currentFecha = normalizeSqlDate(existing.fecha);
   if (!isAdmin && currentFecha < todayKey) {
-    return { pastDate: true };
+    throw appError('VACATION_DELETE_PAST_DATE');
   }
 
   await pool.query(`DELETE FROM vacaciones WHERE id = $1`, [vacationId]);

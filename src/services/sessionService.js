@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import pool from '../db.js';
+import { AppError, appError } from '../lib/errors.js';
 import { checkRateLimit } from '../lib/rateLimiter.js';
 import { generateToken, hashToken } from '../lib/security.js';
 import {
@@ -16,19 +17,19 @@ const MAX_RESET_CODE_ATTEMPTS = 5;
 const pendingResetCodes = new Map();
 
 function createRateLimitError(message, retryAfterSeconds) {
-  const error = new Error(message);
-  error.statusCode = 429;
-  error.retryAfterSeconds = retryAfterSeconds;
-  return error;
+  return appError('RATE_LIMIT_EXCEEDED', { message, retryAfterSeconds });
 }
 
-export async function issueInvitation(user) {
+export async function issueInvitation(user, { throwOnInProcess = false } = {}) {
   const { rows: currentSession } = await pool.query(
     `SELECT estado FROM sesiones WHERE usuario_id = $1`,
     [user.id],
   );
 
   if (currentSession[0]?.estado === 'proceso') {
+    if (throwOnInProcess) {
+      throw appError('INVITATION_ALREADY_IN_PROCESS');
+    }
     return { alreadyInProcess: true, sent: false };
   }
 
@@ -49,6 +50,9 @@ export async function issueInvitation(user) {
     );
   } catch (error) {
     console.log('Error al crear o actualizar la sesión:', error);
+    if (throwOnInProcess && !(error instanceof AppError)) {
+      throw appError('INVITATION_SEND_FAILED', { cause: error });
+    }
     throw error;
   }
 
@@ -60,6 +64,9 @@ export async function issueInvitation(user) {
        WHERE usuario_id = $1 AND request_token_hash = $2`,
       [user.id, requestTokenHash],
     );
+    if (throwOnInProcess && !(error instanceof AppError)) {
+      throw appError('INVITATION_SEND_FAILED', { cause: error });
+    }
     throw error;
   }
 
@@ -268,25 +275,24 @@ export async function confirmSessionResetWithCode(user, rawCode) {
   const userId = Number(user.id);
   const code = String(rawCode || '').trim();
   if (!/^\d{6}$/.test(code)) {
-    return { invalidFormat: true };
+    throw appError('RESET_CODE_INVALID_FORMAT');
   }
 
   const entry = pendingResetCodes.get(userId);
   if (!entry || Date.now() > entry.expiresAt) {
     pendingResetCodes.delete(userId);
-    return { expiredOrMissing: true };
+    throw appError('RESET_CODE_EXPIRED_OR_MISSING');
   }
 
   entry.attempts += 1;
   if (hashToken(code) !== entry.codeHash) {
     if (entry.attempts >= MAX_RESET_CODE_ATTEMPTS) {
       pendingResetCodes.delete(userId);
-      return { tooManyAttempts: true };
+      throw appError('RESET_CODE_TOO_MANY_ATTEMPTS');
     }
-    return {
-      invalidCode: true,
+    throw appError('RESET_CODE_INCORRECT', {
       remainingAttempts: MAX_RESET_CODE_ATTEMPTS - entry.attempts,
-    };
+    });
   }
 
   pendingResetCodes.delete(userId);

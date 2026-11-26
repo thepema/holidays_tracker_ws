@@ -1,3 +1,4 @@
+import { appError } from '../lib/errors.js';
 import { createRateLimitPreHandler } from '../lib/rateLimiter.js';
 import { requireAdmin, createAdminToken, verifyAdminPassword, ADMIN_TOKEN_TTL_SECONDS } from '../lib/security.js';
 import {
@@ -71,14 +72,14 @@ export default async function adminRoutes(app) {
         },
       },
     },
-  }, async (request, reply) => {
+  }, async (request) => {
     if (!process.env.ADMIN_PASSWORD || !process.env.ADMIN_TOKEN_SECRET) {
-      return reply.code(503).send({ error: 'La autenticación de administración no está configurada.' });
+      throw appError('ADMIN_AUTH_NOT_CONFIGURED');
     }
 
     const { password } = request.body || {};
     if (!verifyAdminPassword(password)) {
-      return reply.code(401).send({ error: 'Credenciales de administrador no válidas.' });
+      throw appError('ADMIN_INVALID_CREDENTIALS');
     }
 
     return {
@@ -155,25 +156,13 @@ export default async function adminRoutes(app) {
     const input = request.body || {};
     const required = ['codigo', 'nombre', 'apellidos', 'cargo', 'email', 'tipo_vacaciones'];
     if (required.some((key) => typeof input[key] !== 'string' || !input[key].trim())) {
-      return reply.code(400).send({ error: `Se requieren estos campos: ${required.join(', ')}.` });
+      throw appError('USER_MISSING_REQUIRED_FIELDS', { fields: required });
     }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.email.trim())) {
-      return reply.code(400).send({ error: 'El email no tiene un formato válido.' });
+      throw appError('USER_INVALID_EMAIL');
     }
-    try {
-      const user = await createUser(input);
-      return reply.code(201).send({ usuario: user });
-    } catch (error) {
-      if (error.code === '23505') {
-        const isCodeConflict = String(error.constraint || error.detail || '').toLowerCase().includes('codigo');
-        return reply.code(409).send({
-          error: isCodeConflict ? 'Ya existe un usuario con ese código.' : 'Ya existe un usuario con ese email.',
-        });
-      }
-      if (error.code === '23503') return reply.code(400).send({ error: 'La oficina seleccionada no existe.' });
-      if (error.code === '23514') return reply.code(400).send({ error: 'Los datos del usuario no son válidos.' });
-      throw error;
-    }
+    const user = await createUser(input);
+    return reply.code(201).send({ usuario: user });
   });
 
   app.patch('/usuarios/:usuarioId', {
@@ -207,39 +196,27 @@ export default async function adminRoutes(app) {
         },
       },
     },
-  }, async (request, reply) => {
+  }, async (request) => {
     const { usuarioId } = request.params;
     const existing = await findUserById(usuarioId);
     if (!existing) {
-      return reply.code(404).send({ error: 'Usuario no encontrado.' });
+      throw appError('USER_NOT_FOUND');
     }
 
     const updates = request.body || {};
     const stringKeys = ['codigo', 'nombre', 'apellidos', 'cargo', 'email', 'tipo_vacaciones'];
     for (const key of stringKeys) {
       if (updates[key] !== undefined && (typeof updates[key] !== 'string' || !updates[key].trim())) {
-        return reply.code(400).send({ error: `El campo ${key} no puede estar vacío.` });
+        throw appError('USER_EMPTY_FIELD', { field: key });
       }
     }
 
     if (updates.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(updates.email.trim())) {
-      return reply.code(400).send({ error: 'El email no tiene un formato válido.' });
+      throw appError('USER_INVALID_EMAIL');
     }
 
-    try {
-      const updatedUser = await updateUser(usuarioId, updates);
-      return { usuario: updatedUser };
-    } catch (error) {
-      if (error.code === '23505') {
-        const isCodeConflict = String(error.constraint || error.detail || '').toLowerCase().includes('codigo');
-        return reply.code(409).send({
-          error: isCodeConflict ? 'Ya existe un usuario con ese código.' : 'Ya existe un usuario con ese email.',
-        });
-      }
-      if (error.code === '23503') return reply.code(400).send({ error: 'La oficina seleccionada no existe.' });
-      if (error.code === '23514') return reply.code(400).send({ error: 'Los datos del usuario no son válidos.' });
-      throw error;
-    }
+    const updatedUser = await updateUser(usuarioId, updates);
+    return { usuario: updatedUser };
   });
 
   app.put('/usuarios/:usuarioId/equipos', {
@@ -262,11 +239,11 @@ export default async function adminRoutes(app) {
         },
       },
     },
-  }, async (request, reply) => {
+  }, async (request) => {
     const { usuarioId } = request.params;
     const existing = await findUserById(usuarioId);
     if (!existing) {
-      return reply.code(404).send({ error: 'Usuario no encontrado.' });
+      throw appError('USER_NOT_FOUND');
     }
     const body = request.body || {};
     const rawIds = Array.isArray(body.equipoIds)
@@ -311,16 +288,10 @@ export default async function adminRoutes(app) {
   }, async (request, reply) => {
     const { nombre, usuarioIds } = request.body || {};
     if (typeof nombre !== 'string' || !nombre.trim()) {
-      return reply.code(400).send({ error: 'El nombre del equipo es obligatorio.' });
+      throw appError('TEAM_NAME_REQUIRED');
     }
-    const result = await createTeam({ nombre, usuarioIds });
-    if (result.invalid) {
-      return reply.code(400).send({ error: 'El nombre del equipo no es válido (máximo 120 caracteres).' });
-    }
-    if (result.duplicate) {
-      return reply.code(409).send({ error: 'Ya existe un equipo con ese nombre.' });
-    }
-    return reply.code(201).send({ equipo: result.team });
+    const { team } = await createTeam({ nombre, usuarioIds });
+    return reply.code(201).send({ equipo: team });
   });
 
   app.patch('/equipos/:equipoId', {
@@ -345,23 +316,14 @@ export default async function adminRoutes(app) {
         },
       },
     },
-  }, async (request, reply) => {
+  }, async (request) => {
     const { equipoId } = request.params;
     const { nombre, usuarioIds } = request.body || {};
     if (nombre !== undefined && (typeof nombre !== 'string' || !nombre.trim())) {
-      return reply.code(400).send({ error: 'El nombre del equipo no puede estar vacío.' });
+      throw appError('TEAM_NAME_EMPTY');
     }
-    const result = await updateTeam(equipoId, { nombre, usuarioIds });
-    if (result.notFound) {
-      return reply.code(404).send({ error: 'Equipo no encontrado.' });
-    }
-    if (result.invalid) {
-      return reply.code(400).send({ error: 'El nombre del equipo no es válido (máximo 120 caracteres).' });
-    }
-    if (result.duplicate) {
-      return reply.code(409).send({ error: 'Ya existe otro equipo con ese nombre.' });
-    }
-    return { equipo: result.team };
+    const { team } = await updateTeam(equipoId, { nombre, usuarioIds });
+    return { equipo: team };
   });
 
   app.delete('/equipos/:equipoId', {
@@ -377,12 +339,9 @@ export default async function adminRoutes(app) {
         properties: { equipoId: { type: 'integer', minimum: 1 } },
       },
     },
-  }, async (request, reply) => {
+  }, async (request) => {
     const { equipoId } = request.params;
     const result = await deleteTeam(equipoId);
-    if (result.notFound) {
-      return reply.code(404).send({ error: 'Equipo no encontrado.' });
-    }
     return { eliminado: true, id: result.id };
   });
 
@@ -416,16 +375,10 @@ export default async function adminRoutes(app) {
   }, async (request, reply) => {
     const { nombre, usuarioIds } = request.body || {};
     if (typeof nombre !== 'string' || !nombre.trim()) {
-      return reply.code(400).send({ error: 'El nombre de la oficina es obligatorio.' });
+      throw appError('OFFICE_NAME_REQUIRED');
     }
-    const result = await createOffice({ nombre, usuarioIds });
-    if (result.invalid) {
-      return reply.code(400).send({ error: 'El nombre de la oficina no es válido (máximo 120 caracteres).' });
-    }
-    if (result.duplicate) {
-      return reply.code(409).send({ error: 'Ya existe una oficina con ese nombre.' });
-    }
-    return reply.code(201).send({ oficina: result.office });
+    const { office } = await createOffice({ nombre, usuarioIds });
+    return reply.code(201).send({ oficina: office });
   });
 
   app.patch('/oficinas/:oficinaId', {
@@ -449,23 +402,14 @@ export default async function adminRoutes(app) {
         },
       },
     },
-  }, async (request, reply) => {
+  }, async (request) => {
     const { oficinaId } = request.params;
     const { nombre, usuarioIds } = request.body || {};
     if (nombre !== undefined && (typeof nombre !== 'string' || !nombre.trim())) {
-      return reply.code(400).send({ error: 'El nombre de la oficina no puede estar vacío.' });
+      throw appError('OFFICE_NAME_EMPTY');
     }
-    const result = await updateOffice(oficinaId, { nombre, usuarioIds });
-    if (result.notFound) {
-      return reply.code(404).send({ error: 'Oficina no encontrada.' });
-    }
-    if (result.invalid) {
-      return reply.code(400).send({ error: 'El nombre de la oficina no es válido (máximo 120 caracteres).' });
-    }
-    if (result.duplicate) {
-      return reply.code(409).send({ error: 'Ya existe otra oficina con ese nombre.' });
-    }
-    return { oficina: result.office };
+    const { office } = await updateOffice(oficinaId, { nombre, usuarioIds });
+    return { oficina: office };
   });
 
   app.delete('/oficinas/:oficinaId', {
@@ -480,12 +424,9 @@ export default async function adminRoutes(app) {
         properties: { oficinaId: { type: 'integer', minimum: 1 } },
       },
     },
-  }, async (request, reply) => {
+  }, async (request) => {
     const { oficinaId } = request.params;
     const result = await deleteOffice(oficinaId);
-    if (result.notFound) {
-      return reply.code(404).send({ error: 'Oficina no encontrada.' });
-    }
     return { eliminado: true, id: result.id };
   });
 
@@ -511,14 +452,8 @@ export default async function adminRoutes(app) {
   }, async (request, reply) => {
     const { oficinaId } = request.params;
     const { anio } = request.body || {};
-    const result = await createOfficeCalendar(oficinaId, anio);
-    if (result.invalidYear) {
-      return reply.code(400).send({ error: 'El año del calendario debe estar entre 1900 y 2200.' });
-    }
-    if (result.notFound) {
-      return reply.code(404).send({ error: 'Oficina no encontrada.' });
-    }
-    return reply.code(201).send({ oficina: result.office });
+    const { office } = await createOfficeCalendar(oficinaId, anio);
+    return reply.code(201).send({ oficina: office });
   });
 
   app.delete('/oficinas/:oficinaId/calendarios/:calendarioId', {
@@ -536,13 +471,10 @@ export default async function adminRoutes(app) {
         },
       },
     },
-  }, async (request, reply) => {
+  }, async (request) => {
     const { oficinaId, calendarioId } = request.params;
-    const result = await deleteOfficeCalendar(oficinaId, calendarioId);
-    if (result.notFound) {
-      return reply.code(404).send({ error: 'Calendario anual no encontrado para esta oficina.' });
-    }
-    return { eliminado: true, oficina: result.office };
+    const { office } = await deleteOfficeCalendar(oficinaId, calendarioId);
+    return { eliminado: true, oficina: office };
   });
 
   app.post('/oficinas/:oficinaId/festivos', {
@@ -569,20 +501,8 @@ export default async function adminRoutes(app) {
   }, async (request, reply) => {
     const { oficinaId } = request.params;
     const { fecha, nombre, anio } = request.body || {};
-    const result = await addOfficeHoliday(oficinaId, { fecha, nombre, anio });
-    if (result.invalid) {
-      return reply.code(400).send({ error: 'Indica una fecha válida (YYYY-MM-DD) y un nombre de festivo (máximo 120 caracteres).' });
-    }
-    if (result.invalidYearMismatch) {
-      return reply.code(400).send({ error: 'La fecha seleccionada no corresponde al año del calendario indicado.' });
-    }
-    if (result.notFound) {
-      return reply.code(404).send({ error: 'Oficina no encontrada.' });
-    }
-    if (result.duplicate) {
-      return reply.code(409).send({ error: 'Ya existe un día festivo registrado en esa fecha para esta oficina.' });
-    }
-    return reply.code(201).send({ oficina: result.office });
+    const { office } = await addOfficeHoliday(oficinaId, { fecha, nombre, anio });
+    return reply.code(201).send({ oficina: office });
   });
 
   app.delete('/oficinas/:oficinaId/festivos/:festivoId', {
@@ -600,12 +520,9 @@ export default async function adminRoutes(app) {
         },
       },
     },
-  }, async (request, reply) => {
+  }, async (request) => {
     const { oficinaId, festivoId } = request.params;
     const result = await deleteOfficeHoliday(oficinaId, festivoId);
-    if (result.notFound) {
-      return reply.code(404).send({ error: 'Día festivo no encontrado para esta oficina.' });
-    }
     return { eliminado: true, id: result.id, oficina: result.office };
   });
 
@@ -657,31 +574,10 @@ export default async function adminRoutes(app) {
         properties: { usuarioId: { type: 'integer', minimum: 1 } },
       },
     },
-  }, async (request, reply) => {
+  }, async (request) => {
     const user = await findUserById(request.params.usuarioId);
-    if (!user) return reply.code(404).send({ error: 'Usuario no encontrado.' });
-    try {
-      const result = await issueInvitation(user);
-      if (result?.alreadyInProcess) {
-        return reply.code(409).send({
-          error: 'El usuario ya tiene una invitación en proceso.',
-          yaEnProceso: true,
-          enviada: false,
-        });
-      }
-      return { enviada: true };
-    } catch (error) {
-      if (error?.statusCode === 429) {
-        if (error.retryAfterSeconds) {
-          reply.header('Retry-After', String(error.retryAfterSeconds));
-        }
-        return reply.code(429).send({
-          error: error.message,
-          ...(error.retryAfterSeconds ? { retryAfterSeconds: error.retryAfterSeconds } : {}),
-        });
-      }
-      request.log.error({ err: error }, 'No se pudo enviar la invitación');
-      return reply.code(503).send({ error: 'No se pudo enviar la invitación. Revisa la configuración de correo.' });
-    }
+    if (!user) throw appError('USER_NOT_FOUND');
+    await issueInvitation(user, { throwOnInProcess: true });
+    return { enviada: true };
   });
 }

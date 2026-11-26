@@ -1,4 +1,5 @@
 import pool from '../db.js';
+import { rethrowPgError } from '../lib/errors.js';
 import { setUserTeams } from './teamService.js';
 
 const USER_FIELDS = 'id, codigo, nombre, apellidos, cargo, email, tipo_vacaciones, oficina_id, created_at, updated_at';
@@ -125,7 +126,7 @@ export async function createUser(input) {
     return user;
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});
-    throw error;
+    rethrowPgError(error, 'user');
   } finally {
     client.release();
   }
@@ -223,7 +224,7 @@ export async function updateUser(id, updates) {
     return updated;
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});
-    throw error;
+    rethrowPgError(error, 'user');
   } finally {
     client.release();
   }

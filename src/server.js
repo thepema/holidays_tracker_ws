@@ -7,6 +7,7 @@ import adminRoutes from './routes/admin.js';
 import authRoutes from './routes/auth.js';
 import vacationRoutes from './routes/vacations.js';
 import mcpVacationsPlugin from './plugins/mcpVacations.js';
+import { AppError, ERROR_CATALOG } from './lib/errors.js';
 import { authenticateSession } from './services/sessionService.js';
 
 const app = Fastify({ logger: true });
@@ -101,6 +102,29 @@ await app.register(vacationRoutes, { prefix: '/api' });
 await app.register(mcpVacationsPlugin);
 
 app.setErrorHandler((error, request, reply) => {
+  if (error instanceof AppError || (error?.key && ERROR_CATALOG[error.key])) {
+    if (error.headers) {
+      for (const [headerName, headerValue] of Object.entries(error.headers)) {
+        reply.header(headerName, headerValue);
+      }
+    }
+    if (error.statusCode >= 500 && error.cause) {
+      request.log.error({ err: error.cause }, error.message);
+    }
+    return reply.code(error.statusCode).send({
+      error: error.message,
+      ...error.extraBody,
+    });
+  }
+  if (error.statusCode === 429) {
+    if (error.retryAfterSeconds) {
+      reply.header('Retry-After', String(error.retryAfterSeconds));
+    }
+    return reply.code(429).send({
+      error: error.message,
+      ...(error.retryAfterSeconds ? { retryAfterSeconds: error.retryAfterSeconds } : {}),
+    });
+  }
   if (error.validation || error.statusCode === 400) {
     return reply.code(400).send({ error: 'Datos de entrada no válidos.' });
   }

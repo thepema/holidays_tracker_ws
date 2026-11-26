@@ -1,4 +1,5 @@
 import pool from '../db.js';
+import { appError } from '../lib/errors.js';
 
 function normalizeIdList(rawIds) {
   if (!Array.isArray(rawIds)) return [];
@@ -108,7 +109,7 @@ export async function setUserTeams(usuarioId, rawEquipoIds, client = pool) {
 export async function createTeam({ nombre, usuarioIds }) {
   const cleanName = String(nombre || '').trim();
   if (!cleanName || cleanName.length > 120) {
-    return { invalid: true };
+    throw appError('TEAM_INVALID_NAME');
   }
 
   const client = await pool.connect();
@@ -121,7 +122,7 @@ export async function createTeam({ nombre, usuarioIds }) {
     );
     if (dupRows[0]) {
       await client.query('ROLLBACK');
-      return { duplicate: true };
+      throw appError('TEAM_DUPLICATE');
     }
 
     const { rows } = await client.query(
@@ -142,7 +143,7 @@ export async function createTeam({ nombre, usuarioIds }) {
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});
     if (error.code === '23505') {
-      return { duplicate: true };
+      throw appError('TEAM_DUPLICATE');
     }
     throw error;
   } finally {
@@ -158,14 +159,14 @@ export async function updateTeam(equipoId, { nombre, usuarioIds }) {
     const existing = await findTeamById(equipoId, client);
     if (!existing) {
       await client.query('ROLLBACK');
-      return { notFound: true };
+      throw appError('TEAM_NOT_FOUND');
     }
 
     if (nombre !== undefined) {
       const cleanName = String(nombre || '').trim();
       if (!cleanName || cleanName.length > 120) {
         await client.query('ROLLBACK');
-        return { invalid: true };
+        throw appError('TEAM_INVALID_NAME');
       }
 
       const { rows: dupRows } = await client.query(
@@ -174,7 +175,7 @@ export async function updateTeam(equipoId, { nombre, usuarioIds }) {
       );
       if (dupRows[0]) {
         await client.query('ROLLBACK');
-        return { duplicate: true };
+        throw appError('TEAM_DUPLICATE_OTHER');
       }
 
       await client.query(
@@ -195,7 +196,7 @@ export async function updateTeam(equipoId, { nombre, usuarioIds }) {
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});
     if (error.code === '23505') {
-      return { duplicate: true };
+      throw appError('TEAM_DUPLICATE_OTHER');
     }
     throw error;
   } finally {
@@ -213,7 +214,7 @@ export async function deleteTeam(equipoId) {
     );
     if (!existing[0]) {
       await client.query('ROLLBACK');
-      return { notFound: true };
+      throw appError('TEAM_NOT_FOUND');
     }
 
     await client.query(`DELETE FROM usuarios_equipos WHERE equipo_id = $1`, [equipoId]);

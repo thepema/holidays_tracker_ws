@@ -1,4 +1,5 @@
 import nodemailer from 'nodemailer';
+import { appError } from '../lib/errors.js';
 import { checkCooldown, checkRateLimit, markCooldown } from '../lib/rateLimiter.js';
 
 export const DEFAULT_SMTP_HOST = 'smtp.buzondecorreo.com';
@@ -67,10 +68,7 @@ export function getMailConfig() {
 }
 
 function createRateLimitError(message, retryAfterSeconds) {
-  const error = new Error(message);
-  error.statusCode = 429;
-  error.retryAfterSeconds = retryAfterSeconds;
-  return error;
+  return appError('RATE_LIMIT_EXCEEDED', { message, retryAfterSeconds });
 }
 
 export function validateEmailAddress(email) {
