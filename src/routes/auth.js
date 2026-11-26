@@ -9,6 +9,7 @@ import {
 import {
   activateSession,
   confirmSessionResetWithCode,
+  getSessionApiToken,
   initiateSessionResetVerification,
   markSessionAsRequested,
   recoverSession,
@@ -81,6 +82,36 @@ export default async function authRoutes(app) {
     return {
       autenticado: true,
       usuario: request.user,
+    };
+  });
+
+  app.get('/sesiones/api-token', {
+    preHandler: requireSession,
+    schema: {
+      tags: ['Sesiones'],
+      summary: 'Obtener API token personal (token_hash de sesión) para agentes de IA (MCP)',
+      security: [{ SessionCookie: [] }],
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            apiToken: { type: 'string' },
+            headerName: { type: 'string' },
+          },
+          required: ['apiToken', 'headerName'],
+        },
+      },
+    },
+  }, async (request, reply) => {
+    const apiToken = await getSessionApiToken(request.user.id);
+    if (!apiToken) {
+      return reply.code(403).send({
+        error: 'Solo los usuarios con sesión activa disponen de API token para el agente de IA.',
+      });
+    }
+    return {
+      apiToken,
+      headerName: 'x-api-key',
     };
   });
 

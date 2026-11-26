@@ -1,7 +1,6 @@
 import dotenv from 'dotenv';
 import pg from 'pg';
 
-// ENV_FILE can point to the existing secret file (for example /opt/.env).
 dotenv.config({ path: process.env.ENV_FILE || '.env' });
 
 const { Pool } = pg;

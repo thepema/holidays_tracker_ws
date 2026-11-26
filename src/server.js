@@ -6,6 +6,7 @@ import swaggerUi from '@fastify/swagger-ui';
 import adminRoutes from './routes/admin.js';
 import authRoutes from './routes/auth.js';
 import vacationRoutes from './routes/vacations.js';
+import mcpVacationsPlugin from './plugins/mcpVacations.js';
 import { authenticateSession } from './services/sessionService.js';
 
 const app = Fastify({ logger: true });
@@ -59,6 +60,12 @@ await app.register(swagger, {
           name: SESSION_COOKIE_NAME,
           description: 'Cookie establecida al activar o recuperar una sesión de usuario.',
         },
+        McpApiKeyAuth: {
+          type: 'apiKey',
+          in: 'header',
+          name: 'x-api-key',
+          description: 'API Token personal del usuario (token_hash de su sesión activa) obtenido desde su dashboard.',
+        },
       },
     },
   },
@@ -80,6 +87,7 @@ app.decorateRequest('isAdmin', false);
 app.get('/', async () => ({ message: 'Holiday Tracker API' }));
 
 app.addHook('preHandler', async (request) => {
+  if (request.url === '/mcp' || request.url.startsWith('/mcp?')) return;
   const headerToken = request.headers['x-session-token'];
   const token =
     request.cookies?.[SESSION_COOKIE_NAME] ||
@@ -90,6 +98,7 @@ app.addHook('preHandler', async (request) => {
 await app.register(adminRoutes, { prefix: '/api' });
 await app.register(authRoutes, { prefix: '/api' });
 await app.register(vacationRoutes, { prefix: '/api' });
+await app.register(mcpVacationsPlugin);
 
 app.setErrorHandler((error, request, reply) => {
   if (error.validation || error.statusCode === 400) {

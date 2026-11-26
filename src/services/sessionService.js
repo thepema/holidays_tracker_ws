@@ -346,3 +346,59 @@ export async function revokeSession(userId) {
     [userId],
   );
 }
+
+/**
+ * Obtiene el `token_hash` de la sesión activa de un usuario no administrador
+ * para usarlo como API key en el servicio MCP.
+ */
+export async function getSessionApiToken(userId) {
+  const { rows } = await pool.query(
+    `SELECT TRIM(s.token_hash) AS "tokenHash"
+     FROM sesiones s
+     INNER JOIN usuarios u ON u.id = s.usuario_id
+     WHERE s.usuario_id = $1
+       AND s.estado = 'autorizado'
+       AND s.token_hash IS NOT NULL
+       AND LENGTH(TRIM(s.token_hash)) = 64
+       AND LOWER(TRIM(u.cargo)) NOT IN ('administrador', 'administradora', 'admin')
+     LIMIT 1`,
+    [userId],
+  );
+  const hash = rows[0]?.tokenHash ? String(rows[0].tokenHash).trim() : '';
+  return /^[a-f0-9]{64}$/i.test(hash) ? hash : null;
+}
+
+/**
+ * Autentica a un usuario no administrador mediante su API key (`token_hash` de sesión).
+ */
+export async function authenticateMcpApiKey(apiKey) {
+  const cleanKey = typeof apiKey === 'string' ? apiKey.trim() : '';
+  if (!/^[a-f0-9]{64}$/i.test(cleanKey)) {
+    return null;
+  }
+
+  const { rows } = await pool.query(
+    `UPDATE sesiones s
+     SET updated_at = NOW()
+     FROM usuarios u
+     WHERE s.usuario_id = u.id
+       AND LOWER(TRIM(s.token_hash)) = LOWER($1)
+       AND s.estado = 'autorizado'
+       AND LOWER(TRIM(u.cargo)) NOT IN ('administrador', 'administradora', 'admin')
+     RETURNING s.usuario_id`,
+    [cleanKey],
+  );
+  if (!rows[0]) {
+    return null;
+  }
+
+  const userResult = await pool.query(
+    `SELECT u.id, u.codigo, u.nombre, u.apellidos, u.email, u.cargo, u.tipo_vacaciones,
+            u.oficina_id AS "oficinaId", o.nombre AS "oficinaNombre"
+     FROM usuarios u
+     LEFT JOIN oficinas o ON o.id = u.oficina_id
+     WHERE u.id = $1`,
+    [rows[0].usuario_id],
+  );
+  return mapSessionUser(userResult.rows[0]);
+}
