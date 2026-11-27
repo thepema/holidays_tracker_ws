@@ -6,6 +6,7 @@ import swaggerUi from '@fastify/swagger-ui';
 import adminRoutes from './routes/admin.js';
 import authRoutes from './routes/auth.js';
 import vacationRoutes from './routes/vacations.js';
+import mcpOAuthRoutes from './plugins/mcpOAuthRoutes.js';
 import mcpVacationsPlugin from './plugins/mcpVacations.js';
 import { AppError, ERROR_CATALOG } from './lib/errors.js';
 import { authenticateSession } from './services/sessionService.js';
@@ -30,10 +31,45 @@ const localOrigins = new Set([
   ...(process.env.FRONTEND_ORIGIN ? [process.env.FRONTEND_ORIGIN] : []),
 ]);
 
+function isPublicMcpOrOAuthCorsPath(rawUrl = '') {
+  return (
+    rawUrl === '/mcp' ||
+    rawUrl.startsWith('/mcp?') ||
+    rawUrl.startsWith('/.well-known/') ||
+    rawUrl.startsWith('/oauth/register') ||
+    rawUrl.startsWith('/oauth/token') ||
+    rawUrl.startsWith('/oauth/revoke')
+  );
+}
+
 await app.register(cors, {
-  origin: (origin, callback) => callback(null, isTrustedOrigin(origin) || localOrigins.has(origin)),
-  credentials: true,
-  methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
+  delegator: (req, callback) => {
+    if (isPublicMcpOrOAuthCorsPath(req.url)) {
+      return callback(null, {
+        origin: true,
+        credentials: false,
+        methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
+        allowedHeaders: [
+          'Content-Type',
+          'Authorization',
+          'Accept',
+          'Last-Event-ID',
+          'Mcp-Session-Id',
+          'MCP-Protocol-Version',
+          'x-api-key',
+          'api-key',
+        ],
+        exposedHeaders: ['Mcp-Session-Id', 'WWW-Authenticate'],
+      });
+    }
+
+    return callback(null, {
+      origin: (origin, originCb) =>
+        originCb(null, isTrustedOrigin(origin) || localOrigins.has(origin)),
+      credentials: true,
+      methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
+    });
+  },
 });
 await app.register(cookie);
 
@@ -67,6 +103,11 @@ await app.register(swagger, {
           name: 'x-api-key',
           description: 'API Token personal del usuario (token_hash de su sesión activa) obtenido desde su dashboard.',
         },
+        McpOAuthBearerAuth: {
+          type: 'http',
+          scheme: 'bearer',
+          description: 'Access token virtual OAuth 2.1 emitido en /oauth/token a partir de la API Key del usuario.',
+        },
       },
     },
   },
@@ -88,18 +129,20 @@ app.decorateRequest('isAdmin', false);
 app.get('/', async () => ({ message: 'Holiday Tracker API' }));
 
 app.addHook('preHandler', async (request) => {
-  if (request.url === '/mcp' || request.url.startsWith('/mcp?')) return;
+  if (
+    request.url === '/mcp' ||
+    request.url.startsWith('/mcp?') ||
+    request.url.startsWith('/oauth/') ||
+    request.url.startsWith('/.well-known/')
+  ) {
+    return;
+  }
   const headerToken = request.headers['x-session-token'];
   const token =
     request.cookies?.[SESSION_COOKIE_NAME] ||
     (typeof headerToken === 'string' && headerToken.trim() ? headerToken.trim() : '');
   if (token) request.user = await authenticateSession(token);
 });
-
-await app.register(adminRoutes, { prefix: '/api' });
-await app.register(authRoutes, { prefix: '/api' });
-await app.register(vacationRoutes, { prefix: '/api' });
-await app.register(mcpVacationsPlugin);
 
 app.setErrorHandler((error, request, reply) => {
   if (error instanceof AppError || (error?.key && ERROR_CATALOG[error.key])) {
@@ -132,6 +175,12 @@ app.setErrorHandler((error, request, reply) => {
   return reply.code(500).send({ error: 'Error interno del servidor.' });
 });
 
+await app.register(adminRoutes, { prefix: '/api' });
+await app.register(authRoutes, { prefix: '/api' });
+await app.register(vacationRoutes, { prefix: '/api' });
+await app.register(mcpOAuthRoutes);
+await app.register(mcpVacationsPlugin);
+
 const start = async () => {
   try {
     const port = Number(process.env.PORT) || 3000;
@@ -142,4 +191,8 @@ const start = async () => {
   }
 };
 
-await start();
+export { app };
+
+if (process.env.SKIP_SERVER_LISTEN !== '1') {
+  await start();
+}

@@ -1,6 +1,11 @@
 import mcpPlugin from '@platformatic/mcp';
 import { Type } from '@sinclair/typebox';
 import { AppError } from '../lib/errors.js';
+import {
+  MCP_DEFAULT_SCOPE,
+  deleteVirtualSession,
+  findSessionByAccessToken,
+} from '../services/mcpOAuthStore.js';
 import { authenticateMcpApiKey } from '../services/sessionService.js';
 import { findUserById } from '../services/userService.js';
 import {
@@ -10,6 +15,10 @@ import {
   updateVacationDate,
 } from '../services/vacationService.js';
 import { listHolidaysForUser } from '../services/officeService.js';
+import {
+  buildMcpWwwAuthenticateHeader,
+  resolvePublicBaseUrl,
+} from './mcpOAuthRoutes.js';
 
 function jsonContent(data) {
   return {
@@ -82,20 +91,103 @@ export default async function mcpVacationsPlugin(app) {
 
   // Encapsulado en este plugin: aplica exclusivamente a las rutas /mcp
   app.addHook('preHandler', async (request, reply) => {
+    const issuer = resolvePublicBaseUrl(request);
     const authHeader = String(request.headers.authorization || '').trim();
-    if (/^Bearer\s+/i.test(authHeader)) {
-      return reply.code(401).send({
-        error:
-          'La autenticación Bearer no está permitida en el servicio MCP. Envía tu API token de usuario en la cabecera x-api-key.',
-      });
+
+    if (authHeader) {
+      if (!/^Bearer\s+/i.test(authHeader)) {
+        return reply
+          .code(401)
+          .header(
+            'WWW-Authenticate',
+            buildMcpWwwAuthenticateHeader(request, {
+              error: 'invalid_request',
+              errorDescription: 'Authorization header must use Bearer scheme',
+            }),
+          )
+          .send({
+            error: 'invalid_request',
+            error_description: 'Authorization header must use Bearer scheme.',
+          });
+      }
+
+      const accessToken = authHeader.replace(/^Bearer\s+/i, '').trim();
+      if (!accessToken) {
+        return reply
+          .code(401)
+          .header(
+            'WWW-Authenticate',
+            buildMcpWwwAuthenticateHeader(request, {
+              error: 'invalid_token',
+              errorDescription: 'Bearer token is empty',
+            }),
+          )
+          .send({
+            error: 'invalid_token',
+            error_description: 'Bearer token is empty.',
+          });
+      }
+
+      const lookup = await findSessionByAccessToken(accessToken);
+      if (!lookup.ok) {
+        const description =
+          lookup.reason === 'expired' ? 'Access token has expired' : 'Invalid access token';
+        return reply
+          .code(401)
+          .header(
+            'WWW-Authenticate',
+            buildMcpWwwAuthenticateHeader(request, {
+              error: 'invalid_token',
+              errorDescription: description,
+            }),
+          )
+          .send({
+            error: 'invalid_token',
+            error_description: description,
+          });
+      }
+
+      const mcpUser = await authenticateMcpApiKey(lookup.session.apiKey);
+      if (!mcpUser) {
+        await deleteVirtualSession(lookup.session.id);
+        return reply
+          .code(401)
+          .header(
+            'WWW-Authenticate',
+            buildMcpWwwAuthenticateHeader(request, {
+              error: 'invalid_token',
+              errorDescription: 'Underlying user API key or session is no longer active',
+            }),
+          )
+          .send({
+            error: 'invalid_token',
+            error_description: 'API key inválida o sesión de usuario revocada/inactiva.',
+          });
+      }
+
+      request.mcpUser = mcpUser;
+      request.tokenIssuer = issuer;
+      request.tokenPayload = {
+        iss: issuer,
+        sub: `user:${mcpUser.id}`,
+        client_id: lookup.session.clientId,
+        scope: lookup.session.scope,
+        aud: lookup.session.resource || `${issuer}/mcp`,
+        exp: Math.floor(lookup.session.accessExpiresAt / 1000),
+      };
+      return;
     }
 
     const apiKey = extractApiKeyHeader(request);
     if (!apiKey) {
-      return reply.code(401).send({
-        error:
-          'API key requerida. Obtén tu API token en el dashboard de usuario y envíalo en la cabecera x-api-key.',
-      });
+      return reply
+        .code(401)
+        .header('WWW-Authenticate', buildMcpWwwAuthenticateHeader(request))
+        .send({
+          error: 'authorization_required',
+          error_description:
+            'Autenticación requerida mediante OAuth 2.1 (Authorization: Bearer) o cabecera x-api-key.',
+        });
     }
 
     const mcpUser = await authenticateMcpApiKey(apiKey);
@@ -106,6 +198,12 @@ export default async function mcpVacationsPlugin(app) {
     }
 
     request.mcpUser = mcpUser;
+    request.tokenIssuer = issuer;
+    request.tokenPayload = {
+      iss: issuer,
+      sub: `user:${mcpUser.id}`,
+      scope: MCP_DEFAULT_SCOPE,
+    };
   });
 
   await app.register(mcpPlugin, {
@@ -116,14 +214,14 @@ export default async function mcpVacationsPlugin(app) {
     capabilities: {
       tools: {},
     },
-    enableSSE: false,
+    enableSSE: true,
     transformRouteSchema: (schema) => ({
       ...schema,
       tags: ['MCP'],
-      security: [{ McpApiKeyAuth: [] }],
+      security: [{ McpOAuthBearerAuth: [] }, { McpApiKeyAuth: [] }],
     }),
     instructions:
-      'Servidor MCP de Holiday Tracker autenticado por API key de usuario (cabecera x-api-key). Permite consultar y gestionar exclusivamente las vacaciones y festivos del usuario propietario de la API key.',
+      'Servidor MCP de Holiday Tracker compatible con OAuth 2.1 (sesión virtual respaldada por API key) y cabecera directa x-api-key. Permite consultar y gestionar exclusivamente las vacaciones y festivos del usuario propietario.',
   });
 
   app.mcpAddTool(
