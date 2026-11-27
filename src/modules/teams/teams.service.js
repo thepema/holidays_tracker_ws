@@ -1,5 +1,5 @@
-import pool from '../db.js';
-import { appError } from '../lib/errors.js';
+import pool from '../../shared/db.js';
+import { appError } from '../../shared/errors.js';
 
 function normalizeIdList(rawIds) {
   if (!Array.isArray(rawIds)) return [];

@@ -1,6 +1,6 @@
-import pool from '../db.js';
-import { rethrowPgError } from '../lib/errors.js';
-import { setUserTeams } from './teamService.js';
+import pool from '../../shared/db.js';
+import { rethrowPgError } from '../../shared/errors.js';
+import { setUserTeams } from '../teams/teams.service.js';
 
 const USER_FIELDS = 'id, codigo, nombre, apellidos, cargo, email, tipo_vacaciones, oficina_id, created_at, updated_at';
 

@@ -1,28 +1,41 @@
-import { AppError, appError } from '../lib/errors.js';
-import { createRateLimitPreHandler } from '../lib/rateLimiter.js';
+import { AppError, appError } from '../../shared/errors.js';
+import { createRateLimitPreHandler } from '../../shared/rateLimiter.js';
 import {
+  ADMIN_TOKEN_TTL_SECONDS,
   clearSessionCookie,
+  createAdminToken,
   isValidAdminToken,
   requireAdmin,
   requireSession,
   setSessionCookie,
-} from '../lib/security.js';
+  verifyAdminPassword,
+} from '../../shared/security.js';
 import {
   activateSession,
   confirmSessionResetWithCode,
   getSessionApiToken,
   initiateSessionResetVerification,
+  inviteUsersWithoutActiveSession,
   markSessionAsRequested,
   recoverSession,
   revokeSession,
-} from '../services/sessionService.js';
+} from './session.service.js';
 import {
   findUserByEmail,
   findUserById,
-} from '../services/userService.js';
+  getAdminSessionsSummary,
+  listUsersWithoutActiveSession,
+} from '../users/users.service.js';
 
 const sessionSecurity = [{ SessionCookie: [] }, { AdminBearerAuth: [] }];
 const adminSecurity = [{ AdminBearerAuth: [] }];
+
+const adminLoginRateLimit = createRateLimitPreHandler({
+  bucket: 'route:admin:login',
+  maxRequests: 8,
+  windowMs: 15 * 60 * 1000,
+  errorMessage: 'Demasiados intentos de inicio de sesión de administrador.',
+});
 
 const activateRateLimit = createRateLimitPreHandler({
   bucket: 'route:sesiones:activar',
@@ -72,6 +85,81 @@ function skipRateLimitForAdmin(rateLimitHandler) {
 }
 
 export default async function authRoutes(app) {
+  app.post('/admin/login', {
+    preHandler: adminLoginRateLimit,
+    schema: {
+      tags: ['Administración'],
+      summary: 'Iniciar sesión como administrador',
+      description: 'Intercambia ADMIN_PASSWORD por un token Bearer válido durante 8 horas.',
+      body: {
+        type: 'object',
+        required: ['password'],
+        properties: { password: { type: 'string', minLength: 1 } },
+      },
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            token: { type: 'string' },
+            tokenType: { type: 'string' },
+            expiresIn: { type: 'integer' },
+          },
+          required: ['token', 'tokenType', 'expiresIn'],
+        },
+        401: {
+          type: 'object',
+          properties: { error: { type: 'string' } },
+          required: ['error'],
+        },
+      },
+    },
+  }, async (request) => {
+    if (!process.env.ADMIN_PASSWORD || !process.env.ADMIN_TOKEN_SECRET) {
+      throw appError('ADMIN_AUTH_NOT_CONFIGURED');
+    }
+
+    const { password } = request.body || {};
+    if (!verifyAdminPassword(password)) {
+      throw appError('ADMIN_INVALID_CREDENTIALS');
+    }
+
+    return {
+      token: createAdminToken(),
+      tokenType: 'Bearer',
+      expiresIn: ADMIN_TOKEN_TTL_SECONDS,
+    };
+  });
+
+  app.get('/sesiones/resumen', {
+    preHandler: requireAdmin,
+    schema: {
+      tags: ['Administración'],
+      summary: 'Obtener resumen de sesiones de usuarios (pendientes, solicitados y autenticados)',
+      description: 'Devuelve desde servidor los listados de usuarios con invitación pendiente (`proceso`), solicitudes de reseteo (`solicitado`) y los contadores totales incluyendo usuarios autenticados (`autorizado`).',
+      security: adminSecurity,
+    },
+  }, async () => {
+    return getAdminSessionsSummary();
+  });
+
+  app.post('/sesiones/invitaciones', {
+    preHandler: requireAdmin,
+    schema: {
+      tags: ['Administración'],
+      summary: 'Invitar usuarios sin sesión activa',
+      security: adminSecurity,
+    },
+  }, async () => {
+    const users = await listUsersWithoutActiveSession();
+    const result = await inviteUsersWithoutActiveSession(users);
+    return {
+      total: users.length,
+      enviadas: result.sent,
+      fallidas: result.failed,
+      omitidas: result.skipped || 0,
+    };
+  });
+
   app.get('/sesiones/me', {
     preHandler: requireSession,
     schema: {

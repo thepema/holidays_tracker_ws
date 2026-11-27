@@ -1,6 +1,6 @@
 import nodemailer from 'nodemailer';
-import { appError } from '../lib/errors.js';
-import { checkCooldown, checkRateLimit, markCooldown } from '../lib/rateLimiter.js';
+import { appError } from './errors.js';
+import { checkCooldown, checkRateLimit, markCooldown } from './rateLimiter.js';
 
 export const DEFAULT_SMTP_HOST = 'smtp.buzondecorreo.com';
 export const DEFAULT_SMTP_PORT = 465;

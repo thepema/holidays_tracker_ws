@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { generateToken, hashToken } from '../lib/security.js';
+import { generateToken, hashToken } from '../../shared/security.js';
 
 export const MCP_DEFAULT_SCOPE = 'mcp:vacations';
 export const AUTH_CODE_TTL_MS = 60 * 1000; // 60 segundos (OAuth 2.1 recomienda <= 60s y un solo uso)

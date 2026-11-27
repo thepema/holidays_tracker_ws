@@ -1,5 +1,5 @@
-import { createRateLimitPreHandler } from '../lib/rateLimiter.js';
-import { authenticateMcpApiKey } from '../services/sessionService.js';
+import { createRateLimitPreHandler } from '../../shared/rateLimiter.js';
+import { authenticateMcpApiKey } from '../auth/session.service.js';
 import {
   MCP_DEFAULT_SCOPE,
   consumeAuthorizationCode,
@@ -14,7 +14,7 @@ import {
   registerOAuthClient,
   revokeOAuthToken,
   rotateVirtualSessionTokens,
-} from '../services/mcpOAuthStore.js';
+} from './mcp-oauth.store.js';
 
 const SAFE_HOST_REGEX = /^(?:[a-zA-Z0-9.-]+|\[[a-fA-F0-9:]+\])(?::\d{1,5})?$/;
 

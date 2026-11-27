@@ -3,13 +3,14 @@ import cors from '@fastify/cors';
 import cookie from '@fastify/cookie';
 import swagger from '@fastify/swagger';
 import swaggerUi from '@fastify/swagger-ui';
-import adminRoutes from './routes/admin.js';
-import authRoutes from './routes/auth.js';
-import vacationRoutes from './routes/vacations.js';
-import mcpOAuthRoutes from './plugins/mcpOAuthRoutes.js';
-import mcpVacationsPlugin from './plugins/mcpVacations.js';
-import { AppError, ERROR_CATALOG } from './lib/errors.js';
-import { authenticateSession } from './services/sessionService.js';
+import authRoutes from './modules/auth/auth.routes.js';
+import usersRoutes from './modules/users/users.routes.js';
+import teamsRoutes from './modules/teams/teams.routes.js';
+import officesRoutes from './modules/offices/offices.routes.js';
+import vacationsRoutes from './modules/vacations/vacations.routes.js';
+import mcpModule from './modules/mcp/index.js';
+import { AppError, ERROR_CATALOG } from './shared/errors.js';
+import { authenticateSession } from './modules/auth/session.service.js';
 
 const app = Fastify({ logger: true });
 const SESSION_COOKIE_NAME = 'ht_session';
@@ -175,11 +176,12 @@ app.setErrorHandler((error, request, reply) => {
   return reply.code(500).send({ error: 'Error interno del servidor.' });
 });
 
-await app.register(adminRoutes, { prefix: '/api' });
 await app.register(authRoutes, { prefix: '/api' });
-await app.register(vacationRoutes, { prefix: '/api' });
-await app.register(mcpOAuthRoutes);
-await app.register(mcpVacationsPlugin);
+await app.register(usersRoutes, { prefix: '/api' });
+await app.register(teamsRoutes, { prefix: '/api' });
+await app.register(officesRoutes, { prefix: '/api' });
+await app.register(vacationsRoutes, { prefix: '/api' });
+await app.register(mcpModule);
 
 const start = async () => {
   try {

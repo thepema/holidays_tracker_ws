@@ -1,48 +1,19 @@
-import { appError } from '../lib/errors.js';
-import { requireAdmin, requireAdminOrSession } from '../lib/security.js';
-import { listAllHolidays, listHolidaysForUser } from '../services/officeService.js';
+import { appError } from '../../shared/errors.js';
+import { requireAdmin, requireAdminOrSession } from '../../shared/security.js';
 import {
   createVacations,
   deleteVacation,
   listVacationYears,
   listVacations,
   updateVacationDate,
-} from '../services/vacationService.js';
+} from './vacations.service.js';
+import { listAuthenticatedUsers } from '../users/users.service.js';
+import { sendVacationReminderToAuthenticatedUsers } from '../auth/session.service.js';
 
 const vacationSecurity = [{ AdminBearerAuth: [] }, { SessionCookie: [] }];
 const adminOnlySecurity = [{ AdminBearerAuth: [] }];
 
-export default async function vacationRoutes(app) {
-  app.get('/festivos', {
-    preHandler: requireAdminOrSession,
-    schema: {
-      tags: ['Vacaciones'],
-      summary: 'Consultar días festivos de la oficina del usuario o filtrados (admin)',
-      security: vacationSecurity,
-      querystring: {
-        type: 'object',
-        properties: {
-          oficinaId: { type: 'integer', minimum: 1 },
-          equipoId: { type: 'integer', minimum: 1 },
-          anio: { type: 'integer', minimum: 1900, maximum: 2200 },
-          mes: { type: 'integer', minimum: 1, maximum: 12 },
-        },
-      },
-    },
-  }, async (request) => {
-    if (request.isAdmin) {
-      const { oficinaId, equipoId, anio, mes } = request.query || {};
-      return {
-        festivos: await listAllHolidays({ oficinaId, equipoId, anio, mes }),
-      };
-    }
-    return {
-      oficinaId: request.user.oficinaId ?? null,
-      oficinaNombre: request.user.oficinaNombre ?? null,
-      festivos: await listHolidaysForUser(request.user.id),
-    };
-  });
-
+export default async function vacationsRoutes(app) {
   app.get('/vacaciones/anios', {
     preHandler: requireAdmin,
     schema: {
@@ -173,5 +144,23 @@ export default async function vacationRoutes(app) {
       request.isAdmin
     );
     return { eliminado: true, id: result.id };
+  });
+
+  app.post('/vacaciones/recordatorio', {
+    preHandler: requireAdmin,
+    schema: {
+      tags: ['Administración'],
+      summary: 'Enviar recordatorio de registro de vacaciones a usuarios autenticados',
+      description: 'Envía un correo electrónico a todos los usuarios con sesión autorizada activa recordándoles entrar en la aplicación y registrar sus vacaciones previstas para los próximos meses.',
+      security: adminOnlySecurity,
+    },
+  }, async () => {
+    const users = await listAuthenticatedUsers();
+    const result = await sendVacationReminderToAuthenticatedUsers(users);
+    return {
+      total: users.length,
+      enviadas: result.sent,
+      fallidas: result.failed,
+    };
   });
 }

@@ -1,14 +1,14 @@
 import crypto from 'node:crypto';
-import pool from '../db.js';
-import { AppError, appError } from '../lib/errors.js';
-import { checkRateLimit } from '../lib/rateLimiter.js';
-import { generateToken, hashToken } from '../lib/security.js';
+import pool from '../../shared/db.js';
+import { AppError, appError } from '../../shared/errors.js';
+import { checkRateLimit } from '../../shared/rateLimiter.js';
+import { generateToken, hashToken } from '../../shared/security.js';
 import {
   notifyAdminSessionRequest,
   sendLoginEmail,
   sendSessionResetVerificationEmail,
   sendVacationReminderEmail,
-} from './emailService.js';
+} from '../../shared/email.service.js';
 
 const RESET_CODE_TTL_MS = 10 * 60 * 1000;
 const RESET_CODE_RESEND_COOLDOWN_MS = 60 * 1000;

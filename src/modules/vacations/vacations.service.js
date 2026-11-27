@@ -1,6 +1,6 @@
-import pool from '../db.js';
-import { appError, rethrowPgError } from '../lib/errors.js';
-import { findUserHolidayConflicts } from './officeService.js';
+import pool from '../../shared/db.js';
+import { appError, rethrowPgError } from '../../shared/errors.js';
+import { findUserHolidayConflicts } from '../offices/offices.service.js';
 
 function parseDates(dates) {
   if (!Array.isArray(dates) || dates.length < 1 || dates.length > 366) return null;
